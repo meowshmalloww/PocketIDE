@@ -13,14 +13,3 @@
 .externalNativeBuild
 .cxx
 local.properties
-
-# Planning documents (not part of the app source)
-ARM Hackathon - Google Docs.pdf
-ARM Hackathon - Google Docs.txt
-BATTERY_AND_HARDWARE.txt
-CLARIFYING_QUESTIONS.txt
-DEEP_RESEARCH_PROMPTS.txt
-FRAMEWORK_MODEL_COMPARISON.txt
-PROJECT_PLAN.txt
-RESEARCH_FINDINGS.txt
-TECH_STACK.txt

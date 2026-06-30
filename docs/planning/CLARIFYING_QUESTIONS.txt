@@ -1,0 +1,233 @@
+================================================================================
+              CLARIFYING QUESTIONS — MUST ANSWER BEFORE BUILDING
+================================================================================
+
+These questions are critical for alignment. Answer as many as you can.
+Some have my recommendation in [BRACKETS] — just say "agree" if you approve.
+
+================================================================================
+A. SCOPE & AMBITION
+================================================================================
+
+A1. How many languages should the sandbox support at launch?
+    [RECOMMENDATION: Python + JavaScript only. More languages = more engineering,
+    less time on AI optimization which is the actual scoring criteria.]
+    - Python only?
+    - Python + JavaScript?
+    - Python + JavaScript + HTML/CSS?
+    - Python + JavaScript + C?
+
+A2. What complexity of code should the IDE generate?
+    [RECOMMENDATION: Simple scripts (functions, algorithms, utilities).
+    A 0.5B model cannot build full apps. Keep scope realistic.]
+    - Single-file scripts only?
+    - Multi-file small projects?
+    - Full app scaffolding?
+
+A3. Should the app support user-edited code (manual coding) or only AI-generated?
+    [RECOMMENDATION: Both — AI generates, user can edit, AI repairs.
+    This makes it a real IDE, not just a chat app.]
+    - AI-generated only?
+    - AI-generated + user can edit?
+    - Full manual coding + AI assistant?
+
+A4. Do you want a chat interface (like Cursor/Windsurf) or a pure code-generation
+    interface (prompt → code → run)?
+    [RECOMMENDATION: Chat + code panel side by side, like Cursor.]
+    - Chat only?
+    - Code panel only?
+    - Chat + code panel (split view)?
+
+================================================================================
+B. MODEL STRATEGY
+================================================================================
+
+B1. Are you willing to fine-tune models, or use pre-trained only?
+    [RECOMMENDATION: Fine-tune with LoRA. This is where "optimization" points
+    come from — showing you improved model quality for a specific task.]
+    - Pre-trained only (faster to build, fewer optimization points)?
+    - LoRA fine-tune all 3 agents (more work, more points)?
+    - LoRA fine-tune only the Coder agent (balanced)?
+
+B2. Do you have access to a GPU for fine-tuning?
+    [If no, we use Google Colab free tier (T4 GPU, sufficient for 0.5B LoRA).]
+    - Yes, I have a local GPU (what specs)?
+    - Yes, I have cloud GPU access?
+    - No, use Google Colab free tier?
+    - No, use pre-trained only?
+
+B3. Base model choice — are you okay with Qwen2.5-Coder-0.5B as the primary model?
+    [RECOMMENDATION: Yes. It's Apache 2.0, code-specific, Llama-compatible,
+    tested on Android, and the smallest viable code model.]
+    - Yes, Qwen2.5-Coder-0.5B
+    - Prefer SmolLM2-135M (smaller but less code-capable)?
+    - Prefer Qwen2.5-Coder-1.5B (better quality, larger)?
+    - Use multiple: SmolLM2-135M for Architect + Qwen2.5-Coder-0.5B for Coder?
+
+B4. Should we use one base model with swappable LoRA adapters (memory efficient)
+    or three separate model files (simpler but larger)?
+    [RECOMMENDATION: One base + LoRA swapping. This is itself an optimization
+    story — "we reduced memory by 70% by sharing base weights." ExecuTorch
+    may not support runtime LoRA swapping yet — need to verify. If not
+    supported, use 3 separate models with sequential loading.]
+    - One base + LoRA adapters (if ExecuTorch supports it)?
+    - Three separate .pte files, loaded sequentially?
+    - One single model for all 3 roles (simplest, less specialized)?
+
+================================================================================
+C. TARGET HARDWARE
+================================================================================
+
+C1. What is your actual test device?
+    [This determines what optimizations we can show.]
+    - Flagship (Snapdragon 8 Gen 2/3, 12GB+ RAM)?
+    - Mid-range (Snapdragon 7-series, 6-8GB RAM)?
+    - Budget (Snapdragon 4-series, 4GB RAM)?
+    - I don't have a device — use emulator?
+    - Multiple devices for comparison?
+
+C2. Do you have an Arm v9 device with SME2 support?
+    [SME2 gives 17-73% speedup. If you have it, we benchmark with/without.]
+    - Yes (e.g., Vivo X300, recent flagship)?
+    - No, but I can get one?
+    - No, focus on i8mm + NEON optimizations?
+
+C3. What minimum Android version should we target?
+    [RECOMMENDATION: Android 8.0 (API 26) — covers 95%+ of devices, required
+    for tree-sitter library.]
+    - Android 8.0 (API 26)?
+    - Android 10 (API 29)?
+    - Android 12 (API 31)?
+    - Android 13 (API 33)?
+
+================================================================================
+D. INFERENCE FRAMEWORK
+================================================================================
+
+D1. ExecuTorch vs LiteRT-LM as primary inference engine?
+    [RECOMMENDATION: ExecuTorch. Judge Michael Hall teaches ExecuTorch.
+    Arm's official learning paths use it. KleidiAI integration is native.
+    However, Qwen2.5 export to .pte has known issues — may need workarounds.]
+    - ExecuTorch (Arm's ecosystem, judges know it)?
+    - LiteRT-LM (Google's ecosystem, easier Qwen support, GPU/NPU)?
+    - Both (ExecuTorch primary, LiteRT fallback)?
+    - llama.cpp (C++ engine, KleidiAI built-in, more manual work)?
+
+D2. If ExecuTorch has issues exporting Qwen2.5-Coder, are you okay falling
+    back to Llama 3.2 1B (which has official ExecuTorch support and pre-built
+    .pte files on Hugging Face)?
+    - Yes, Llama 3.2 1B is fine?
+    - No, must use Qwen2.5-Coder?
+    - Try Qwen first, fall back to Llama if needed?
+
+================================================================================
+E. TIMELINE & RESOURCES
+================================================================================
+
+E1. How much time do you have before the submission deadline?
+    [This determines scope. Be honest.]
+    - <1 week (MVP: single model, basic UI, Python sandbox)?
+    - 1-2 weeks (multi-agent, fine-tuning, benchmarks)?
+    - 2-4 weeks (full feature set, polished submission)?
+    - 4+ weeks (ambitious, all features)?
+
+E2. Are you building this solo or with a team?
+    - Solo?
+    - 2 people?
+    - 3+ people?
+
+E3. What is your experience level with:
+    - Android development (Kotlin/Compose)? [None / Basic / Intermediate / Expert]
+    - PyTorch / ExecuTorch? [None / Basic / Intermediate / Expert]
+    - Model fine-tuning (LoRA, quantization)? [None / Basic / Intermediate / Expert]
+    - C++ / JNI? [None / Basic / Intermediate / Expert]
+
+E4. Do you have a Hugging Face account for hosting models?
+    - Yes?
+    - No, but I'll create one?
+    - No, host models elsewhere?
+
+E5. Do you have a GitHub account for the repo?
+    - Yes?
+    - No, but I'll create one?
+
+================================================================================
+F. BENCHMARKING & PROOF ARTIFACTS
+================================================================================
+
+F1. What benchmarks matter most to you for the submission?
+    [RECOMMENDATION: All of these — each maps to a hackathon optimization
+    category. The more measurable improvements, the better.]
+    - Model size (FP32 vs INT8 vs INT4)?
+    - Inference speed (tokens/sec, TTFT)?
+    - Memory usage (peak RSS, flat ceiling proof)?
+    - Quality (HumanEval/MBPP pass@1 before/after fine-tuning)?
+    - Arm-specific (with/without KleidiAI, with/without SME2)?
+    - All of the above?
+
+F2. Should the app have a built-in benchmark mode that generates proof
+    artifact screenshots automatically?
+    [RECOMMENDATION: Yes — judges need to see proof artifacts for Track 3.
+    Auto-generating them saves time and looks professional.]
+    - Yes, built-in benchmark + auto-screenshot?
+    - No, I'll run benchmarks manually via ADB?
+
+================================================================================
+G. UI/UX PREFERENCES
+================================================================================
+
+G1. What should the app look like?
+    [RECOMMENDATION: Dark theme, code-focused, Cursor/Windsurf-inspired.]
+    - Dark theme, minimal, code-focused (like VS Code)?
+    - Material 3 default (Google style)?
+    - Custom theme (what colors)?
+
+G2. Should the app show the agent swarm activity (which agent is running,
+    memory usage, etc.) or hide it behind a clean interface?
+    [RECOMMENDATION: Show it — the swarm IS the wow factor. Judges need
+    to see multi-agent orchestration happening.]
+    - Show agent activity + memory metrics (transparent)?
+    - Hide internals, clean interface only?
+    - Toggle: simple mode vs developer mode?
+
+G3. App name — "Codex" is a placeholder. What should we call it?
+    - Codex?
+    - ArmSwarm?
+    - PocketCoder?
+    - EdgeForge?
+    - Your own name?
+
+================================================================================
+H. RISKS & MITIGATIONS
+================================================================================
+
+H1. What is your biggest concern about this project?
+    - Model quality (0.5B might generate bad code)?
+    - ExecuTorch export issues?
+    - Memory constraints on target device?
+    - Time constraints?
+    - All of the above?
+
+H2. If we can only deliver ONE thing well, what should it be?
+    [This is the fallback if time runs short.]
+    - The multi-agent swarm (3 models working sequentially)?
+    - The self-repair loop (generate → execute → fix)?
+    - The optimization benchmarks (INT4 quantization + KleidiAI)?
+    - The offline Android app (works in airplane mode)?
+    - The fine-tuned models on Hugging Face?
+
+================================================================================
+HOW TO ANSWER
+================================================================================
+
+Just type the question number and your answer, e.g.:
+  A1: Python + JavaScript
+  B1: LoRA fine-tune all 3
+  C1: Mid-range, Snapdragon 778G, 6GB RAM
+  ...
+
+Or just say "agree with all recommendations" if you approve my defaults.
+You don't need to answer every question — skip ones you're unsure about
+and I'll use my recommended default.
+
+================================================================================

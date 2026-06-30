@@ -1,0 +1,325 @@
+================================================================================
+          FRAMEWORK COMPARISON & MODEL RESEARCH — DECISION GUIDE
+================================================================================
+
+================================================================================
+PART 1: INFERENCE FRAMEWORK COMPARISON
+================================================================================
+
+--- EXECUTORCH (Meta/PyTorch) ---
+
+PROS:
++ Arm's official learning path uses ExecuTorch + KleidiAI + XNNPACK
++ Judge Michael Hall literally teaches this framework
++ KleidiAI enabled by DEFAULT since ExecuTorch 0.7 (zero integration effort)
++ 50KB runtime footprint (smallest of any framework)
++ 20%+ prefill speedup with KleidiAI on Galaxy S24+ (350+ prefill tk/s, 40+ decode tk/s)
++ Works on 3-5 year old phones (your LG Q70) via NEON/SDOT/I8MM
++ Official Android AAR: org.pytorch:executorch-android (Maven Central)
++ JNI bindings included, LlmModule API: load(), generate(), token streaming
++ mmap loading by default (LOAD_MODE_MMAP)
++ INT4 groupwise quantization (8da4w mode)
++ Official demo app (LlamaDemo) with full source code on GitHub
++ Qwen3 0.6B now officially supported (added May 2025)
++ Llama 3.2 1B/3B officially supported with pre-built .pte files
++ Hit 1.0 GA in October 2025
++ Apache 2.0 license
++ Arm blog: "Bringing Generative AI to the Masses with ExecuTorch and KleidiAI"
++ Unsloth supports ExecuTorch export for Qwen3 0.6B (472MB .pte file)
+
+CONS:
+- Qwen2.5-0.5B export has known issues:
+  * GitHub #9353: SpinQuant export fails with AssertionError (qc4w range)
+  * GitHub #14810: Qwen2.5 export fails with "adapter_checkpoint" error in v0.7
+  * These issues appear RESOLVED in ExecuTorch 1.0+ (confirmed by users)
+- SpinQuant does not officially support Qwen2.5-0.5B (but INT4 groupwise works)
+- Qwen2.5-Coder-0.5B specifically NOT tested in official demos (Qwen3 0.6B is)
+- No GPU/NPU acceleration via ExecuTorch on Android (CPU only with XNNPACK)
+  * QNN backend exists for Qualcomm DSP but requires QNN SDK + complex setup
+- Documentation can be sparse for non-Llama models
+- Building AAR from source requires NDK + CMake setup
+
+BOTTOM LINE: ExecuTorch is the Arm ecosystem choice. Judges know it.
+KleidiAI is built in. But Qwen2.5-0.5B export may need workarounds.
+Qwen3 0.6B is officially supported and may be the better model choice.
+
+--- LITERT-LM (Google AI Edge) ---
+
+PROS:
++ Qwen2.5-0.5B officially supported with pre-converted models on Hugging Face
++ GPU acceleration (OpenCL) — up to 19x faster than llama.cpp on GPU
++ NPU acceleration (Qualcomm, MediaTek, Google Tensor)
++ Kotlin API: com.google.ai.edge.litertlm:litertlm-android (stable)
++ Cross-platform: Android, iOS, Web, Desktop, IoT
++ Pre-converted models on LiteRT Hugging Face Community (download and go)
++ Qwen2.5-0.5B benchmark: 251 prefill tk/s, 30 decode tk/s (S24 Ultra, CPU)
++ Qwen2.5-0.5B on GPU: potentially much faster (not benchmarked yet)
++ Multi-Token Prediction (MTP) for decode speedup
++ Tool use / function calling support for agentic workflows
++ KV-cache management, session state, multi-turn conversation built in
++ minSdk 23 (Android 6.0) — even broader device support
++ Also uses KleidiAI under the hood (via XNNPACK integration)
++ 3x faster than llama.cpp on CPU
+
+CONS:
+- NOT the framework Arm's judges teach (Arm learning paths use ExecuTorch)
+- Google's ecosystem, not Arm's (may seem less "Arm-optimized" to judges)
+- GPU/NPU acceleration only on specific devices (not your LG Q70)
+- Known bug: Qwen2.5-1.5B tool calling wedges after 1-2 calls (#2256)
+- Larger runtime footprint than ExecuTorch (50KB)
+- Less control over low-level CPU optimization (no direct C++ kernel access)
+- KleidiAI integration is indirect (through XNNPACK, not native)
+
+BOTTOM LINE: LiteRT-LM is easier to use, has better Qwen support, and GPU/NPU
+acceleration. But it's Google's ecosystem, not Arm's. Judges may not recognize
+it as "Arm optimization" as readily.
+
+--- LLAMA.CPP (Community) ---
+
+PROS:
++ KleidiAI built-in (direct integration)
++ Supports Qwen2.5 models natively
++ Easiest path for experimentation
++ C++ API, JNI bindings available
++ Works on virtually any device
+
+CONS:
+- Not a framework judges teach or expect
+- Less polished Android integration (no official AAR)
+- More manual work for Android deployment
+- No GPU/NPU acceleration on Android
+- Benchmark reference, not production framework
+
+--- SUMMARY TABLE ---
+
+| Feature              | ExecuTorch       | LiteRT-LM        | llama.cpp       |
+|----------------------|------------------|------------------|-----------------|
+| Arm Judge Alignment  | ★★★★★          | ★★★☆☆          | ★★☆☆☆         |
+| KleidiAI Integration | ★★★★★ (native) | ★★★☆☆ (via XNN) | ★★★★☆ (built)  |
+| Qwen2.5-0.5B Support | ★★★☆☆ (issues) | ★★★★★ (native)  | ★★★★☆         |
+| Qwen3-0.6B Support   | ★★★★★ (native) | ★★★★☆           | ★★★★☆         |
+| GPU Acceleration     | ★☆☆☆☆ (no)     | ★★★★★ (yes)     | ★☆☆☆☆ (no)    |
+| NPU Acceleration     | ★★☆☆☆ (QNN)    | ★★★★★ (yes)     | ★☆☆☆☆ (no)    |
+| Android AAR          | ★★★★★ (Maven)  | ★★★★★ (Maven)   | ★★☆☆☆ (manual) |
+| Ease of Use          | ★★★☆☆          | ★★★★★           | ★★★☆☆         |
+| Runtime Footprint    | ★★★★★ (50KB)   | ★★★☆☆           | ★★★☆☆         |
+| Low-Level CPU Access | ★★★★★ (C++)    | ★★☆☆☆           | ★★★★★ (C++)   |
+| Battery Efficiency   | ★★★★☆          | ★★★☆☆           | ★★★☆☆         |
+| License              | Apache 2.0       | Apache 2.0       | MIT             |
+
+--- MY RECOMMENDATION ---
+
+OPTION A: ExecuTorch + Qwen3-0.6B (BEST FOR HACKATHON)
+  - ExecuTorch officially supports Qwen3 0.6B (added May 2025)
+  - KleidiAI enabled by default = instant Arm optimization story
+  - Judges know this framework = recognition in Technological Implementation
+  - Qwen3 0.6B is slightly larger than Qwen2.5-Coder-0.5B but officially tested
+  - Unsloth confirms 472MB .pte export works
+  - Risk: Qwen3 0.6B is a general model, not code-specific (may need fine-tuning)
+
+OPTION B: LiteRT-LM + Qwen2.5-Coder-0.5B (EASIEST PATH)
+  - Pre-converted models on Hugging Face (download and go)
+  - GPU acceleration on newer devices
+  - But: less Arm-judge recognition, less "optimization story"
+
+OPTION C: ExecuTorch + Llama 3.2 1B (SAFEST PATH)
+  - Officially supported, pre-built .pte files, Arm's own learning path
+  - KleidiAI + SME2 benchmarks well documented
+  - But: 1B is larger, not code-specific, may be too big for LG Q70
+
+OPTION D: BOTH (ExecuTorch primary + LiteRT-LM fallback)
+  - Build with ExecuTorch first, fall back to LiteRT-LM if export fails
+  - More work but maximum flexibility
+  - Can benchmark both frameworks = extra optimization comparison
+
+================================================================================
+PART 2: MODEL COMPARISON (SUB-1B CODE MODELS)
+================================================================================
+
+--- BENCHMARK RESULTS ---
+
+HumanEval pass@1 (Python code generation, higher = better):
+
+| Model                    | Size   | HumanEval | MBPP  | License     | Code-Specific |
+|--------------------------|--------|-----------|-------|-------------|---------------|
+| Qwen2.5-Coder-0.5B       | 0.49B  | 28.0%     | 52.9% | Apache 2.0  | YES           |
+| Qwen2.5-Coder-1.5B       | 1.54B  | 43.9%     | 69.2% | Apache 2.0  | YES           |
+| DeepSeek-Coder-1.3B      | 1.3B   | 34.8%     | 55.6% | DEEPSEEK    | YES           |
+| Qwen3-0.6B               | 0.6B   | ~25-30%?  | ~50%? | Apache 2.0  | NO (general)  |
+| SmolLM2-360M-Instruct    | 0.36B  | ~15-20%?  | ~30%? | Apache 2.0  | NO (general)  |
+| SmolLM2-135M-Instruct    | 0.135B | ~5-10%?   | ~15%? | Apache 2.0  | NO (general)  |
+| Llama 3.2 1B Instruct    | 1.0B   | ~17%      | ~43%  | Llama License| NO (general)  |
+| Stable Code 3B           | 3.0B   | ~32%      | ~60%  | Apache 2.0  | YES           |
+
+NOTE: SmolLM2 and Qwen3 scores are estimates — no official HumanEval
+numbers published for these specific models. SmolLM2 is a general model,
+not code-trained. Qwen3 is general but newer architecture.
+
+--- EXECUTORCH SUPPORT STATUS ---
+
+| Model                    | ExecuTorch .pte | LiteRT-LM | Notes                    |
+|--------------------------|-----------------|-----------|--------------------------|
+| Qwen2.5-Coder-0.5B       | ⚠️ Issues       | ✅ Yes    | ET export bugs in 0.7,   |
+|                          |                 |           | fixed in 1.0 (unconfirmed)|
+| Qwen3-0.6B               | ✅ Official     | ✅ Yes    | Added May 2025, Unsloth  |
+|                          |                 |           | confirms 472MB .pte works |
+| Llama 3.2 1B             | ✅ Official     | ✅ Yes    | Pre-built .pte on HF     |
+|                          |                 |           | Arm's learning path model |
+| SmolLM2-135M             | ✅ Works (1.0+) | ❌ No     | User confirmed ET 1.0    |
+|                          |                 |           | export works after debug |
+| SmolLM2-360M             | ⚠️ Unconfirmed  | ❌ No     | Likely works with ET 1.0 |
+| DeepSeek-Coder-1.3B      | ⚠️ Unconfirmed  | ❌ No     | Llama-compatible arch    |
+
+--- MODEL SIZE ON DISK (INT4 QUANTIZED) ---
+
+| Model                    | FP32    | INT8    | INT4    | Fits 4GB RAM? |
+|--------------------------|---------|---------|---------|---------------|
+| SmolLM2-135M             | ~540MB  | ~135MB  | ~35-70MB| ✅ YES        |
+| SmolLM2-360M             | ~1.4GB  | ~360MB  | ~90-180MB| ✅ YES       |
+| Qwen2.5-Coder-0.5B       | ~1.9GB  | ~500MB  | ~130-280MB| ⚠️ TIGHT    |
+| Qwen3-0.6B               | ~2.3GB  | ~600MB  | ~150-472MB| ⚠️ TIGHT    |
+| Llama 3.2 1B             | ~4GB    | ~1GB    | ~350-780MB| ❌ NO        |
+| Qwen2.5-Coder-1.5B       | ~6GB    | ~1.5GB  | ~450-900MB| ❌ NO        |
+
+--- DETAILED ANALYSIS ---
+
+QWEN2.5-CODER-0.5B:
+  + Best code generation quality under 1B (28% HumanEval, 52.9% MBPP)
+  + Code-specific training (trained on 5.5T tokens of code)
+  + Apache 2.0 license
+  + 32K context length
+  + Llama-compatible architecture (RoPE, SwiGLU, RMSNorm, GQA)
+  - ExecuTorch export has known issues (GitHub #9353, #14810)
+  - Not officially tested in ExecuTorch demo app
+  - INT4 at ~130-280MB is tight for 4GB RAM (LG Q70)
+  - LiteRT-LM supports it natively (521MB model on Hugging Face)
+
+QWEN3-0.6B:
+  + Officially supported by ExecuTorch (added May 2025)
+  + Unsloth confirms .pte export works (472MB)
+  + Apache 2.0 license
+  + Newer architecture than Qwen2.5
+  + General-purpose (not code-specific) — may need fine-tuning for code
+  - Slightly larger than Qwen2.5-Coder-0.5B
+  - No published HumanEval/MBPP scores
+  - 472MB .pte is tight for 4GB RAM
+
+SMOLLM2-135M:
+  + Smallest viable model (~35-70MB INT4)
+  + Fits in L3 cache = massive energy efficiency story
+  + Works on 4GB RAM devices easily
+  + ExecuTorch 1.0 export confirmed working by users
+  + Apache 2.0 license
+  - NOT code-specific (general language model)
+  - Very low code generation quality (~5-10% HumanEval estimate)
+  - Would need significant fine-tuning to generate usable code
+  - Best used for Architect agent (planning), not Coder agent
+
+SMOLLM2-360M:
+  + Good middle ground (90-180MB INT4)
+  + Fits on 4GB RAM devices
+  + Better general performance than 135M
+  + Apache 2.0 license
+  - NOT code-specific
+  - No ExecuTorch export confirmed (likely works with ET 1.0)
+  - Code generation quality still low (~15-20% HumanEval estimate)
+
+LLAMA 3.2 1B:
+  + Official ExecuTorch support, pre-built .pte files
+  + Arm's own learning path model (most documented path)
+  + Good general performance
+  - NOT code-specific
+  - 350-780MB INT4 — too large for 4GB RAM (LG Q70)
+  - Llama license (not Apache 2.0, more restrictive)
+  - Would need fine-tuning for code generation
+
+DEEPSEEK-CODER-1.3B:
+  + Good code quality (34.8% HumanEval, 55.6% MBPP)
+  + Code-specific training
+  - 1.3B is too large for 4GB RAM devices
+  - DEEPSEEK license (not Apache 2.0)
+  - No confirmed ExecuTorch export
+
+--- MODEL STRATEGY OPTIONS ---
+
+OPTION 1: Qwen2.5-Coder-0.5B for all 3 agents
+  + Best code quality under 1B
+  + Code-specific
+  - ET export issues (may need workarounds or ET 1.0+)
+  - Tight for 4GB RAM
+  - Use LiteRT-LM if ET fails
+
+OPTION 2: Qwen3-0.6B for all 3 agents
+  + Official ET support, confirmed working
+  + Newer architecture
+  - Not code-specific (needs fine-tuning)
+  - 472MB is tight for 4GB RAM
+  - No published code benchmarks
+
+OPTION 3: Mixed models by agent role
+  - Architect: SmolLM2-135M (small, planning doesn't need code knowledge)
+  - Coder: Qwen2.5-Coder-0.5B or Qwen3-0.6B (needs code ability)
+  - Validator: SmolLM2-360M (error analysis, mid-size)
+  + Optimal memory usage per task
+  + Shows intelligent model selection = optimization story
+  - More complex to implement (multiple export pipelines)
+  - Different tokenizers for different model families
+
+OPTION 4: Qwen2.5-Coder-0.5B primary + SmolLM2-135M fallback
+  + Use Qwen2.5-Coder on devices with 6GB+ RAM
+  + Use SmolLM2-135M on LG Q70 (4GB RAM)
+  + Adaptive model selection based on available RAM
+  + Another optimization story: "auto-selects model based on device capability"
+  - Two export pipelines needed
+  - SmolLM2-135M code quality is very low
+
+OPTION 5: Llama 3.2 1B (safest, most documented)
+  + Pre-built .pte files, Arm's learning path
+  + Guaranteed to work with ExecuTorch + KleidiAI
+  - Too large for LG Q70
+  - Not code-specific
+  - Llama license restrictions
+
+================================================================================
+PART 3: MY RECOMMENDATION
+================================================================================
+
+FRAMEWORK: ExecuTorch (Option A)
+  - This is an Arm hackathon. Use Arm's framework.
+  - KleidiAI enabled by default = instant optimization
+  - Judges know it = recognition
+  - If Qwen export fails, fall back to LiteRT-LM (Option D)
+
+MODEL: Qwen3-0.6B (Option 2) OR Qwen2.5-Coder-0.5B (Option 1)
+  - Qwen3-0.6B: officially supported by ExecuTorch, confirmed working
+  - Qwen2.5-Coder-0.5B: better code quality but ET export issues
+  - DECISION: Try Qwen2.5-Coder-0.5B first (better code, code-specific)
+    If ET export fails → try Qwen3-0.6B (officially supported)
+    If that fails → use LiteRT-LM with Qwen2.5-Coder-0.5B (pre-converted)
+    Last resort → Llama 3.2 1B (pre-built .pte, guaranteed)
+
+FOR LG Q70 (4GB RAM): SmolLM2-135M or SmolLM2-360M
+  - Only viable option for 4GB RAM
+  - Will need LoRA fine-tuning for code generation
+  - This is actually a GREAT optimization story:
+    "We fine-tuned a 135M general model for code generation on-device"
+
+================================================================================
+PART 4: WHAT TO DECIDE NOW
+================================================================================
+
+Choose your framework:
+  A) ExecuTorch (Arm ecosystem, judges know it, KleidiAI native)
+  B) LiteRT-LM (Google ecosystem, easier, GPU/NPU, pre-converted Qwen)
+  C) Both — ExecuTorch primary, LiteRT-LM fallback
+  D) Let me decide later, start with ExecuTorch and see if it works
+
+Choose your model approach:
+  1) Qwen2.5-Coder-0.5B (best code quality, may have ET export issues)
+  2) Qwen3-0.6B (officially supported by ET, general not code-specific)
+  3) Mixed models by agent role (SmolLM2 + Qwen, optimal memory)
+  4) Qwen2.5-Coder-0.5B + SmolLM2-135M fallback for low-end devices
+  5) Llama 3.2 1B (safest, most documented, but too big for LG Q70)
+  6) Let me decide later, try Qwen2.5-Coder first and fallback as needed
+
+================================================================================

@@ -1,0 +1,317 @@
+================================================================================
+              BATTERY EFFICIENCY & HARDWARE ANALYSIS
+                      PocketIDE — Track 3 Mobile AI
+================================================================================
+
+================================================================================
+1. BATTERY EFFICIENCY RESEARCH
+================================================================================
+
+The hackathon explicitly mentions "battery efficiency" as a Track 3 optimization
+target. This is a scoring opportunity we must not miss.
+
+--- KEY RESEARCH FINDINGS ---
+
+EnerInfer (2026, arxiv.org/html/2606.23001v2):
+- First on-device LLM framework that jointly manages energy, throughput, thermal
+- Improves energy efficiency by up to 65% on phones
+- Key insight: "modestly lowering NPU and DDR frequencies preserves quality of
+  experience while substantially improving energy efficiency"
+- Reduces overall device energy consumption by up to 11% vs OS defaults
+
+FUSE (2025, arxiv.org/abs/2507.02135):
+- Unified energy-aware governor for LLM inference on mobile
+- Mobile DVFS governors (CPU, GPU, memory) operate independently → up to 40.4%
+  longer latency vs optimal frequency combinations
+- FUSE reduces TTFT by 7-17%, time-per-output-token by 25-37% with same energy
+
+MNN-AECS (2025, arxiv.org/html/2506.19884):
+- Adaptive Energy-Centric Core Selection for LLM decoding
+- LLM decode phase is MEMORY-BOUND → doesn't need big CPU cores
+- Dynamically selects low-power CPU cores during decode
+- 23% energy reduction with no slowdown (averaged across 7 devices)
+- 39-78% energy saving vs llama.cpp, ExecuTorch, MediaPipe, mllm
+- NO ROOT ACCESS REQUIRED — works at application level
+- Integrated into MNN framework (Alibaba's mobile inference engine)
+
+llm.npu (2024, arxiv.org/html/2407.05858v2):
+- NPU offloading for prefill phase
+- 30.7x energy savings on average
+- 22.4x faster prefill speed
+- 1000+ tokens/sec prefilling for billion-sized models
+
+MELT Study (2024, arxiv.org/html/2403.12844v4):
+- First systematic study of on-device LLM execution
+- Energy: 0.16-0.21 mWh per token
+- ~500 prompts until battery depletion (40 input tokens, 135 output tokens)
+- Galaxy S23: sustained power <8.5W, instantaneous max 14W
+- iPhone 14 Pro: sustained 13.8W, instantaneous max >18W
+- KEY: "continuous execution of LLMs remains elusive due to energy + thermal"
+- Thermal throttling causes significant performance degradation over time
+
+--- PRACTICAL BATTERY OPTIMIZATIONS FOR POCKETIDE ---
+
+1. SEQUENTIAL EXECUTION (already planned):
+   - Only one model loaded at a time = lower peak power draw
+   - Between agents: CPU can downclock, saving energy
+   - Natural energy management without extra code
+
+2. INT4 QUANTIZATION (already planned):
+   - Smaller model = less memory access = less energy
+   - Memory access dominates LLM energy consumption
+   - INT4 vs FP32: ~8x less data movement → proportional energy savings
+
+3. ADAPTIVE CORE SELECTION (NEW — add to plan):
+   - Use big cores (Cortex-X2/A76) for prefill (compute-bound)
+   - Use little cores (Cortex-A55/A510) for decode (memory-bound)
+   - Decode doesn't need big cores — it's waiting on memory
+   - This is the MNN-AECS approach: 23% energy savings, no speed loss
+
+4. THERMAL-AWARE INFERENCE (NEW — add to plan):
+   - Monitor device temperature
+   - Reduce thread count or clock speed when thermal throttling starts
+   - Short bursts with cooldown periods > sustained heavy inference
+   - 44% performance drop from thermal throttling within minutes
+
+5. MMAP LOADING (already planned):
+   - Memory-mapped file loading = only load needed weights
+   - Reduces memory pressure = less energy on memory management
+   - ExecuTorch supports LOAD_MODE_MMAP by default
+
+6. SMALL MODELS IN CACHE (already planned):
+   - 50M-135M model INT4 = ~35-70MB → fits in L3 cache
+   - Cache access uses 10-100x less energy than DRAM access
+   - This is a genuine optimization story for the judges
+
+7. BATTERY-AWARE UI (NEW — add to plan):
+   - Show battery level in the app
+   - Warn user when battery is low
+   - Option to switch to "power saving mode" (fewer agents, smaller context)
+   - Track energy consumption per inference for benchmarking
+
+--- BENCHMARK METRICS TO REPORT ---
+
+For the hackathon submission, measure and report:
+- Energy per token (mWh/token) — use Android BatteryManager API
+- Total energy per code generation task (mWh)
+- Battery percentage consumed per task
+- Sustained vs burst performance (tokens/sec over 5 min)
+- Thermal throttling impact (performance curve over time)
+- Compare: FP32 vs INT4, big cores vs little cores, 1 thread vs 4 threads
+
+================================================================================
+2. TARGET HARDWARE ANALYSIS
+================================================================================
+
+--- YOUR CURRENT DEVICE: LG Q70 ---
+
+IMPORTANT: Your LG Q70 actually uses Snapdragon 675, NOT 765.
+(GSMArena confirms: LG Q70 = Qualcomm SDM675 Snapdragon 675, 11nm)
+
+Specifications:
+- CPU: 2x Cortex-A76 (2.0GHz) + 6x Cortex-A55 (1.7GHz)
+- Architecture: ARMv8.2-A (64-bit)
+- GPU: Adreno 612
+- RAM: 4GB LPDDR4x
+- OS: Android 9 (upgradable to Android 10), you said Android 12
+- Process: 11nm
+
+ARM Feature Support:
+- NEON (SIMD): YES — all ARMv8-A CPUs have NEON
+- i8mm (INT8 matrix multiply): NO — requires ARMv8.6-A+
+- SME2 (Scalable Matrix Extension 2): NO — requires ARMv9.2-A
+- SVE/SVE2: NO
+
+CHALLENGE: 4GB RAM is EXTREMELY tight for LLM inference
+- Android OS uses ~1.5-2GB
+- Available to apps: ~1.5-2GB
+- 0.5B model INT4: ~130MB weights + ~50-200MB KV cache + runtime overhead
+- It MIGHT work but barely — need ultra-small model or aggressive optimization
+- Using SmolLM2-135M INT4 (~35MB) would be safer on this device
+
+OPPORTUNITY: If we get it working on this device, it's an INCREDIBLE WOW factor
+- "Runs on a 2019 budget phone with 4GB RAM" = maximum optimization story
+- Judges will be impressed if we show flat memory ceiling on 4GB device
+- This is the ultimate proof of optimization
+
+--- SNAPDRAGON 8 GEN 1 (your potential second device) ---
+
+Phones: Samsung Galaxy S22, OnePlus 10 Pro, etc.
+
+Specifications:
+- CPU: 1x Cortex-X2 (3.0GHz) + 3x Cortex-A710 (2.5GHz) + 4x Cortex-A510 (1.8GHz)
+- Architecture: ARMv9.0-A (64-bit)
+- GPU: Adreno 730
+- RAM: typically 8-12GB LPDDR5
+- Process: 4nm (Samsung)
+
+ARM Feature Support:
+- NEON: YES
+- i8mm: YES — ARMv9.0-A includes i8mm
+- SME2: NO — requires ARMv9.2-A (Cortex-X3/A715 or newer)
+- SVE2: YES (ARMv9.0-A includes SVE2)
+
+This is a GOOD mid-to-high-range device:
+- 8-12GB RAM = comfortable for 0.5B model
+- i8mm support = KleidiAI acceleration works
+- No SME2 = can't show SME2 benchmarks (but can show i8mm vs no-i8mm)
+
+--- PHONES WITH SME2 SUPPORT (for maximum optimization story) ---
+
+SME2 requires ARMv9.2-A, which means Cortex-X3, Cortex-A715, or newer.
+
+Phones with SME2:
+1. Samsung Galaxy S24 / S24+ / S24 Ultra (Snapdragon 8 Gen 3)
+   - Cortex-X4 (3.4GHz) + Cortex-A720 + Cortex-A520
+   - ARMv9.2-A → SME2 YES
+   - 8-12GB RAM
+   - BEST OPTION for showing SME2 benchmarks
+   - Arm's own benchmarks use similar tier devices
+
+2. Samsung Galaxy S25 / S25+ / S25 Ultra (Snapdragon 8 Elite)
+   - Oryon CPU (ARMv9.2-A)
+   - SME2 YES
+   - LATEST option, most impressive
+
+3. Vivo X300 Pro (MediaTek Dimensity 9300)
+   - Cortex-X4 + Cortex-A720
+   - ARMv9.2-A → SME2 YES
+   - This is the EXACT device Arm uses in their learning path benchmarks
+   - Shows 17-73% speedup with SME2
+
+4. OnePlus 12 (Snapdragon 8 Gen 3) — same as Galaxy S24
+5. Any phone with Snapdragon 8 Gen 3 or newer
+
+RECOMMENDATION: If you can get a Samsung Galaxy S24 (Snapdragon 8 Gen 3),
+you can show the FULL optimization story:
+- NEON baseline → i8mm acceleration → SME2 acceleration
+- Three tiers of optimization = maximum points
+
+--- IPHONE 15 PRO MAX (your current device) ---
+
+- A17 Pro chip: ARMv8.6-A with i8mm support
+- 6GB RAM
+- Has i8mm but NOT SME2 (Apple doesn't implement SME)
+- We are NOT building for iOS (hackathon is Arm-focused, Android is the target)
+- Could theoretically run the app if we built for iOS, but that's out of scope
+
+--- DEVICE TESTING STRATEGY ---
+
+Tier 1 (WOW factor): LG Q70 (Snapdragon 675, 4GB RAM)
+- Show it works on a BUDGET 2019 phone
+- "If it works here, it works anywhere"
+- Ultra-optimization story: SmolLM2-135M INT4, minimal KV cache
+
+Tier 2 (Main benchmarking): Snapdragon 8 Gen 1 device (if you get one)
+- Show i8mm acceleration
+- Comfortable RAM for 0.5B model
+- Primary demo device
+
+Tier 3 (Maximum optimization proof): Galaxy S24 or newer (if you can get one)
+- Show SME2 acceleration (17-73% speedup)
+- Three-tier optimization comparison: NEON → i8mm → SME2
+- Matches Arm's own benchmark devices
+
+================================================================================
+3. ANDROID VERSION SUPPORT
+================================================================================
+
+You said Android 12, want to support as many versions as possible.
+
+RECOMMENDED: minSdk = 26 (Android 8.0)
+- Covers 95%+ of active Android devices
+- Required for tree-sitter library (minSdk 26)
+- Required for some Jetpack Compose features
+- LG Q70 can upgrade to Android 10 (API 29) → within range
+
+targetSdk = 34 (Android 14) or 35 (Android 15)
+- Required for Google Play Store submission
+- Latest API features
+
+Compile with SDK 34 or 35
+- Latest build tools
+- Latest Compose features
+
+ABI: arm64-v8a only
+- 64-bit ARM is required for ExecuTorch
+- All modern phones are arm64-v8a
+- Reduces APK size (no x86, no armeabi-v7a)
+
+================================================================================
+4. UPDATED CLARIFYING QUESTION ANSWERS SUMMARY
+================================================================================
+
+A1: Support many popular languages that run on ARM Android
+    → Python (Chaquopy) + JavaScript (QuickJS) at launch
+    → Add more later (Java, C, HTML/CSS) if time permits
+
+A2: Simple to mid code, some complex, multi-file projects
+    → 0.5B model handles simple-mid well
+    → Complex/multi-file: use sequential generation (file by file)
+
+A3: Both AI-generated and user-edited
+    → Code editor with AI features (like Cursor)
+
+A4: Chat + code panel (split view)
+    → Like Cursor/Windsurf layout
+
+B1: Use existing pre-trained, fine-tune if possible, train own if time
+    → Start with Qwen2.5-Coder-0.5B pre-trained
+    → LoRA fine-tune for each agent role
+    → Train from scratch only if time and resources allow (unlikely needed)
+
+B2: T4, L40, A100 cloud GPUs + 4080M local
+    → EXCELLENT — more than enough for 0.5B LoRA fine-tuning
+    → A100 or L40 for fastest training, 4080M for experimentation
+
+B3: Not confident about Qwen2.5-Coder yet
+    → That's fine — we'll research and compare before deciding
+    → Alternatives: SmolLM2-135M, Qwen2.5-Coder-1.5B, Llama 3.2-1B
+    → Need to test code generation quality before committing
+
+B4: No idea on LoRA swapping
+    → Need to verify if ExecuTorch supports runtime LoRA adapter swapping
+    → If not: use 3 separate .pte files with sequential loading
+    → If yes: one base model + 3 LoRA adapters = massive memory savings
+
+C1: LG Q70 (SD 675, 4GB RAM) + potentially SD 8 Gen 1 Samsung
+    → LG Q70 = ultra-low-end WOW factor device
+    → SD 8 Gen 1 = mid-to-high benchmarking device
+    → Consider getting Galaxy S24 for SME2 benchmarks
+
+C3: Android 12, support as many versions as possible
+    → minSdk 26 (Android 8.0), targetSdk 34/35
+
+D1/D2: Not decided on inference framework
+    → RECOMMENDATION: ExecuTorch (Arm's ecosystem, judges know it)
+    → FALLBACK: LiteRT-LM (Google's framework, easier Qwen support)
+
+E1: 4+ weeks
+    → Enough time for full feature set
+
+E2: Solo + 10 AI agents
+    → Strong team — AI agents can help with code generation, research, testing
+
+E3: Android dev (Flutter/Dart/Kotlin) intermediate-expert
+    → Kotlin native is different from Flutter but you'll adapt quickly
+    → PyTorch intermediate — good enough for model export
+    → Fine-tuning basic — we'll use LoRA scripts (well-documented)
+    → C++ basic — JNI boilerplate is mostly copy-paste from ExecuTorch examples
+
+F1: All benchmarks
+    → Model size, speed, memory, quality, Arm-specific, battery
+
+F2: Will benchmark + live demo to judges
+    → Built-in benchmark mode + live airplane mode demo
+
+G2: Show agent activity with colors
+    → Each agent highlighted in different color
+    → Agent name hover, memory usage, active state indicators
+
+G3: App name = "PocketIDE"
+
+H2: Optimization is the priority
+    → All effort should focus on measurable AI optimization
+    → App exists to showcase optimization, not the other way around
+
+================================================================================

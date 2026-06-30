@@ -52,6 +52,31 @@ cd PocketIDE
 4. Enable airplane mode
 5. Open PocketIDE and start generating code
 
+## Project Structure
+
+```
+PocketIDE/
+├── app/                    # Android application (Kotlin + Compose)
+│   └── src/main/
+│       ├── java/com/pocketide/
+│       │   ├── MainActivity.kt
+│       │   └── ui/theme/   # Material 3 theme
+│       └── res/            # Resources (layouts, strings, icons)
+├── docs/
+│   └── planning/           # Research & planning documents
+│       ├── PROJECT_PLAN.txt
+│       ├── TECH_STACK.txt
+│       ├── RESEARCH_FINDINGS.txt
+│       ├── FRAMEWORK_MODEL_COMPARISON.txt
+│       ├── BATTERY_AND_HARDWARE.txt
+│       ├── CLARIFYING_QUESTIONS.txt
+│       ├── DEEP_RESEARCH_PROMPTS.txt
+│       └── ARM Hackathon - Google Docs.txt
+├── build.gradle.kts
+├── settings.gradle.kts
+└── LICENSE
+```
+
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE)

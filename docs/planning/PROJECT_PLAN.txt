@@ -1,0 +1,325 @@
+================================================================================
+                    ARM AI OPTIMIZATION CHALLENGE 2026
+                     TRACK 3: MOBILE AI — PROJECT PLAN
+                          "PocketIDE" — Mobile AI IDE
+================================================================================
+
+TRACK: Track 3 (Mobile AI) — On-device, offline, Arm-powered
+GOAL:  AI Optimization Challenge — show clear optimization work + measurable improvements
+PRIZE: $8,000 total ($3,000 Overall Winner + $1,000 Best Mobile AI)
+
+--------------------------------------------------------------------------------
+CONCEPT SUMMARY
+--------------------------------------------------------------------------------
+A mobile IDE (Android) that runs a multi-agent micro-swarm of small, specialized
+AI models entirely on-device. The app writes, executes, validates, and repairs
+code autonomously — all offline, on an Arm-powered phone.
+
+The "WOW": An Android phone in airplane mode writes code, catches its own errors,
+repairs them, and runs the final result — no internet, no cloud, no laptop.
+Works even on a budget 2019 phone with 4GB RAM.
+
+The "OPTIMIZATION": Multiple ultra-compact models (50M-500M params) quantized to
+INT4/INT8, exported via ExecuTorch with KleidiAI acceleration, running sequentially
+with flat memory ceiling on mid-range Arm devices. Battery-efficient inference
+using adaptive core selection and thermal-aware scheduling.
+
+--------------------------------------------------------------------------------
+WHY THIS WINS (JUDGING CRITERIA ALIGNMENT)
+--------------------------------------------------------------------------------
+
+1. TECHNOLOGICAL IMPLEMENTATION (40 pts) — HEAVY FOCUS HERE
+   - ExecuTorch + KleidiAI + XNNPACK = Arm-specific optimization
+   - INT4/INT8 quantization = model size reduction (measurable)
+   - Sequential execution loop = flat memory ceiling on low-RAM devices
+   - SME2/NEON/i8mm utilization = Arm assembly-level instruction acceleration
+   - Battery efficiency: adaptive core selection, thermal-aware inference
+   - Benchmark before/after: tokens/sec, memory, model size, TTFT, energy/token
+
+2. USER/DEV EXPERIENCE (15 pts)
+   - Clean repo with build instructions
+   - Installable APK that works in airplane mode
+   - Code editor UI with syntax highlighting (tree-sitter)
+   - Chat + code panel split view (like Cursor/Windsurf)
+   - Agent activity visualization (colored agent indicators)
+   - Clear setup/validate instructions
+
+3. POTENTIAL IMPACT (20 pts)
+   - Open-source optimized micro-models on Hugging Face
+   - Reusable template for edge code generation
+   - MIT/Apache 2.0 license
+   - First mobile multi-agent code IDE that works fully offline
+   - Works on budget devices = accessible to broader developer community
+
+4. "WOW" FACTOR (25 pts)
+   - Phone in airplane mode writes + runs + repairs code autonomously
+   - Works on LG Q70 (2019 budget phone, 4GB RAM) = maximum optimization story
+   - Self-correcting closed-loop system
+   - Multi-agent swarm visible on screen (colored agent indicators)
+   - Genuine gap in mobile ecosystem — nothing like this exists
+
+--------------------------------------------------------------------------------
+ARCHITECTURE OVERVIEW (7 LAYERS)
+--------------------------------------------------------------------------------
+
+LAYER 1: USER INTERFACE (The Presentation)
+- Kotlin + Jetpack Compose + Material 3
+- Dark theme, code-focused, Cursor/Windsurf-inspired layout
+- Chat panel (left) + code editor panel (right) = split view
+- Code editor with syntax highlighting (tree-sitter via ComposeSyntaxHighlighter)
+- Console output + error display (bottom panel)
+- Agent status indicators: each agent shown in different color
+  - Architect = blue, Coder = green, Validator = orange
+  - Active agent highlighted, memory usage displayed
+  - Agent name hover shows current task
+- Settings (model selection, quantization level, power saving mode)
+- Battery level indicator + energy consumption tracking
+
+LAYER 2: THE BRAIN / ORCHESTRATION LAYER (Swarm Orchestrator)
+- Deterministic state machine (NOT AI-driven — rigid scheduling)
+- Sequential Execution Loop: Load Agent → Execute → Unload → Next Agent
+- Active Memory Pruning: purge model weights after each agent runs
+- Flat memory ceiling regardless of swarm complexity
+- Manages: Architect → Coder → Validator → (Repair loop)
+- Thermal monitor: reduces threads/clock when throttling detected
+- Adaptive core selection: big cores for prefill, little cores for decode
+
+LAYER 3: CORE AI LAYER (The Micro-Swarm)
+- Agent 1 (Architect): Breaks down user prompt into structured plan
+- Agent 2 (Coder): Generates code from structured plan
+- Agent 3 (Validator): Analyzes errors, generates repair instructions
+- Each agent: 50M-500M param model, task-specific fine-tuned
+- INT4/INT8 quantized, exported to .pte via ExecuTorch
+- Supports both AI-generated code and user manual editing
+
+LAYER 4: CORE INFERENCE & OPTIMIZATION LAYER
+- ExecuTorch runtime (50KB footprint) [PENDING USER CONFIRMATION]
+- KleidiAI micro-kernels (NEON/i8mm/SME2 acceleration)
+- XNNPACK backend for Android CPU
+- Ahead-of-time compiled .pte model graphs
+- mmap loading for memory efficiency (LOAD_MODE_MMAP default)
+- Runtime feature detection: NEON (always), i8mm (if available), SME2 (if available)
+- Graceful fallback: SME2 → i8mm → NEON baseline
+
+LAYER 5: INTEGRATION BRIDGE
+- JNI bridge between Kotlin app and C++ ExecuTorch runtime
+- ExecuTorch AAR library: org.pytorch:executorch-android (Maven Central)
+- Model loading/unloading lifecycle management
+- Token streaming from inference to UI
+- Error trace capture from sandbox to validator agent
+- C++ native code for hardware-level optimization (NDK)
+
+LAYER 6: APPLICATION SANDBOX ENVIRONMENT (The Runtime)
+- Local code execution environment (isolated)
+- Language support at launch: Python (Chaquopy) + JavaScript (QuickJS)
+- Future languages: Java, C, HTML/CSS (if time permits)
+- Captures stdout, stderr, exit codes
+- Timeout enforcement + crash isolation
+- No network access (true offline validation)
+- Feeds errors back to Validator agent for repair loop
+- tree-sitter for syntax validation before execution
+
+LAYER 7: BENCHMARKING & PROOF ARTIFACTS
+- Built-in benchmark mode: tokens/sec, TTFT, memory RSS, model size, energy/token
+- Before/after optimization comparison logs
+- Auto-generate proof artifact screenshots for submission
+- Battery consumption tracking (Android BatteryManager API)
+- Thermal throttling curve (performance over time)
+- Compare: FP32 vs INT8 vs INT4, with/without KleidiAI, big vs little cores
+- Live demo mode: airplane mode → generate → execute → repair → run
+
+--------------------------------------------------------------------------------
+THE AUTONOMOUS VALIDATION LOOP (CLOSED-LOOP RESILIENCY)
+--------------------------------------------------------------------------------
+
+[User Prompt] → [Architect Agent: Plan] → [Coder Agent: Generate Code]
+       ↑                                              ↓
+       |                                    [Sandbox: Execute Code]
+       |                                              ↓
+[Coder Agent: Repair] ← [Validator Agent: Analyze] ← [Pass?]
+                                                          |
+                                                     [YES → Output]
+
+Loop continues autonomously until:
+  1. Code executes successfully → display result
+  2. Max iterations reached → show best attempt
+  3. No improvement detected → show error + last attempt
+
+Supports: simple scripts, mid-complexity code, multi-file projects (sequential)
+
+--------------------------------------------------------------------------------
+MODEL STRATEGY
+--------------------------------------------------------------------------------
+
+PRIMARY CANDIDATE: Qwen2.5-Coder-0.5B-Instruct [PENDING USER CONFIRMATION]
+  - 0.49B params, Apache 2.0 license
+  - HumanEval: 28% pass@1, MBPP: 52.9% pass@1
+  - 32K context length
+  - Already tested on Android via ExecuTorch and LiteRT
+  - Samsung S24 Ultra: 251 prefill tk/s, 30 decode tk/s (CPU, LiteRT)
+  - INT4 quantized: ~130-280MB
+
+ALTERNATIVE FOR LOW-END DEVICE (LG Q70, 4GB RAM): SmolLM2-135M-Instruct
+  - 135M params, ultra-compact
+  - INT4 quantized: ~35-70MB → fits in L3 cache
+  - Safer for 4GB RAM devices
+  - Less code-capable than Qwen2.5-Coder
+
+FALLBACK: Llama 3.2 1B Instruct
+  - Official ExecuTorch support, pre-built .pte files on Hugging Face
+  - Larger but well-tested export pipeline
+  - Arm's own learning paths use this model
+
+TRAINING/FINE-TUNING PLAN:
+  - Start with pre-trained model
+  - LoRA fine-tune for each agent role:
+    - Architect: fine-tune on planning/task decomposition data
+    - Coder: fine-tune on code generation from structured specs
+    - Validator: fine-tune on error analysis + repair instructions
+  - Use agent distillation: generate training data from large model
+    (e.g., Qwen2.5-Coder-32B as teacher → 0.5B as student)
+  - Post-training quantization: INT4 groupwise (group_size=32/64)
+  - Export to .pte via ExecuTorch with XNNPACK + KleidiAI
+  - Training hardware: A100/L40 cloud GPU or 4080M local (all sufficient)
+
+MODEL DEPLOYMENT OPTIONS:
+  Option A: One base model + 3 LoRA adapters (swapped at runtime)
+    - Base INT4: ~130-280MB + 3 LoRA adapters: ~15-45MB = ~300MB total
+    - KEY optimization story: 70% memory reduction vs 3 separate models
+    - Requires ExecuTorch runtime LoRA support (NEEDS VERIFICATION)
+  Option B: Three separate .pte files, loaded sequentially
+    - 3 × 130-280MB on disk, only 1 in memory at a time
+    - Simpler, guaranteed to work
+    - Memory ceiling = size of largest single model
+
+--------------------------------------------------------------------------------
+BATTERY EFFICIENCY STRATEGY (TRACK 3 REQUIREMENT)
+--------------------------------------------------------------------------------
+
+1. Sequential execution = lower peak power (only 1 model active)
+2. INT4 quantization = 8x less data movement = proportional energy savings
+3. Adaptive core selection: big cores for prefill, little cores for decode
+   - Decode is memory-bound, doesn't need big cores
+   - 23% energy savings with no speed loss (MNN-AECS research)
+4. Thermal-aware inference: monitor temp, reduce threads when throttling
+5. mmap loading: only load needed weights into memory
+6. Small models in cache: 35-70MB model fits in L3 cache = 10-100x less energy
+7. Battery-aware UI: show battery level, power saving mode option
+
+Benchmark metrics: mWh/token, energy per task, battery % consumed, thermal curve
+
+--------------------------------------------------------------------------------
+TARGET HARDWARE
+--------------------------------------------------------------------------------
+
+TIER 1 — WOW FACTOR DEVICE: LG Q70 (Snapdragon 675, 4GB RAM)
+  - ARMv8.2-A, NEON only (no i8mm, no SME2)
+  - 4GB RAM = extreme constraint, needs SmolLM2-135M or ultra-optimized 0.5B
+  - If it works here → maximum optimization story for judges
+  - "Runs on a 2019 budget phone" = incredible WOW factor
+
+TIER 2 — MAIN BENCHMARK DEVICE: Snapdragon 8 Gen 1 (e.g., Samsung S22)
+  - ARMv9.0-A, NEON + i8mm (KleidiAI acceleration works)
+  - 8-12GB RAM = comfortable for 0.5B model
+  - Primary demo and benchmarking device
+  - No SME2 (needs Cortex-X3/A715 or newer)
+
+TIER 3 — MAXIMUM OPTIMIZATION PROOF: Galaxy S24+ (Snapdragon 8 Gen 3)
+  - ARMv9.2-A, NEON + i8mm + SME2
+  - Can show 3-tier optimization: NEON → i8mm → SME2 (17-73% speedup)
+  - Matches Arm's own benchmark devices
+  - Only if user can acquire this device
+
+ANDROID VERSION: minSdk 26 (Android 8.0), targetSdk 34/35
+ABI: arm64-v8a only
+
+--------------------------------------------------------------------------------
+SUBMISSION CHECKLIST
+--------------------------------------------------------------------------------
+
+[ ] Public GitHub repo with MIT or Apache 2.0 license (visible in About section)
+[ ] Working Android APK (compiles, installs, runs in airplane mode)
+[ ] Open-source optimized .pte models on Hugging Face
+[ ] Project Write-Up:
+    [ ] Project Overview (what + why it should win)
+    [ ] Functionality/Output (what it does + final output)
+    [ ] Setup Instructions (build/run/validate on Arm device)
+[ ] Proof Artifacts (Track 3 requirement):
+    [ ] Benchmark screenshots (tokens/sec before/after optimization)
+    [ ] Memory usage comparisons (flat ceiling proof)
+    [ ] Model size comparisons (FP32 vs INT8 vs INT4)
+    [ ] Battery efficiency metrics (mWh/token, energy per task)
+    [ ] Arm-specific: with/without KleidiAI, with/without SME2
+[ ] Optional: 3-minute demo video (airplane mode → code → repair → run)
+
+--------------------------------------------------------------------------------
+TIMELINE (4+ WEEKS AVAILABLE)
+--------------------------------------------------------------------------------
+
+Phase 1: Research & Setup (3-5 days)
+  - Set up ExecuTorch dev environment
+  - Export model to .pte with INT4 quantization
+  - Build basic Android app shell with ExecuTorch JNI
+  - Verify model loads + generates text on target device
+  - Set up Android Studio project, Gradle, NDK
+
+Phase 2: Core Inference + Single Agent (5-7 days)
+  - Implement ExecuTorch inference pipeline in app
+  - Build code editor UI with syntax highlighting (tree-sitter)
+  - Build chat + code split view layout
+  - Get single model generating code from prompts
+  - Benchmark: tokens/sec, memory, TTFT, energy/token
+
+Phase 3: Multi-Agent Swarm (5-7 days)
+  - Implement sequential execution orchestrator
+  - Fine-tune 3 agent variants (Architect, Coder, Validator)
+  - Implement memory load/unload lifecycle
+  - Add agent activity visualization (colored indicators)
+  - Benchmark: memory ceiling stability
+
+Phase 4: Sandbox + Repair Loop (5-7 days)
+  - Integrate Python (Chaquopy) + JavaScript (QuickJS) execution sandbox
+  - Implement autonomous validation loop
+  - Test: generate → execute → repair → success
+  - Benchmark: repair success rate, iterations to fix
+
+Phase 5: Optimization & Benchmarks (3-5 days)
+  - Run benchmarks on all available devices
+  - Compare: FP32 vs INT8 vs INT4, with/without KleidiAI
+  - Battery efficiency benchmarks (mWh/token)
+  - Generate proof artifact screenshots
+  - Optimize for LG Q70 (4GB RAM) if possible
+
+Phase 6: Polish & Submit (3-5 days)
+  - Clean repo, README, build instructions
+  - Upload models to Hugging Face
+  - Record demo video (airplane mode)
+  - Write project description
+  - Submit
+
+--------------------------------------------------------------------------------
+PENDING DECISIONS (need user confirmation before building)
+--------------------------------------------------------------------------------
+
+1. INFERENCE FRAMEWORK: ExecuTorch (recommended) or LiteRT-LM?
+   - Recommendation: ExecuTorch (Arm ecosystem, judges know it)
+   - Status: AWAITING USER CONFIRMATION
+
+2. BASE MODEL: Qwen2.5-Coder-0.5B or alternative?
+   - User said "not confident yet" — needs deeper research
+   - Status: NEEDS MODEL COMPARISON RESEARCH
+
+3. UI THEME: Dark theme (recommended)?
+   - Status: AWAITING USER CONFIRMATION
+
+4. SME2 DEVICE: Can user acquire Galaxy S24 or similar?
+   - Status: AWAITING USER RESPONSE
+
+================================================================================
+                    SEE ALSO:
+  - TECH_STACK.txt              (detailed technology recommendations)
+  - RESEARCH_FINDINGS.txt       (all online research compiled)
+  - BATTERY_AND_HARDWARE.txt    (battery + hardware analysis)
+  - DEEP_RESEARCH_PROMPTS.txt   (prompts for another AI to research)
+  - CLARIFYING_QUESTIONS.txt    (original questions + user answers)
+================================================================================
