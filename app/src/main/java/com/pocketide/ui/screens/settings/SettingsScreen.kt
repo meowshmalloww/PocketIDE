@@ -13,10 +13,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,9 +35,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.pocketide.data.ai.AiConfig
+import com.pocketide.data.ai.AiConfigRepository
 import com.pocketide.data.model.Language
+import com.pocketide.ui.theme.ThemeColors
 import com.pocketide.ui.theme.ThemeViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -47,15 +52,20 @@ fun SettingsScreen(
     onBack: () -> Unit,
     themeViewModel: ThemeViewModel,
 ) {
-    var selectedModel by remember { mutableStateOf("None (not loaded yet)") }
-    var modelExpanded by remember { mutableStateOf(false) }
-    var quantization by remember { mutableStateOf("INT4") }
-    var quantExpanded by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val aiConfigRepository = remember { AiConfigRepository(context) }
+    var aiConfig by remember { mutableStateOf(aiConfigRepository.load()) }
+    var apiKeyVisible by remember { mutableStateOf(false) }
     var powerSaving by remember { mutableStateOf(false) }
     var thermalAware by remember { mutableStateOf(true) }
     var adaptiveCores by remember { mutableStateOf(true) }
     var maxRepairIterations by remember { mutableStateOf(3f) }
     val enabledLanguages = remember { mutableStateOf(Language.entries.toSet()) }
+
+    fun persistAiConfig(update: (AiConfig) -> AiConfig) {
+        aiConfig = update(aiConfig)
+        aiConfigRepository.save(aiConfig)
+    }
 
     val isDarkMode by themeViewModel.isDarkMode.collectAsState()
 
@@ -115,70 +125,58 @@ fun SettingsScreen(
 
             // --- AI Model Section ---
             SectionHeader("AI Model")
+            Text(
+                text = "Connect to any OpenAI-compatible chat completions API.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
-            ExposedDropdownMenuBox(
-                expanded = modelExpanded,
-                onExpandedChange = { modelExpanded = it },
-            ) {
-                OutlinedTextField(
-                    value = selectedModel,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Model") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelExpanded) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .menuAnchor(),
-                )
-                ExposedDropdownMenu(
-                    expanded = modelExpanded,
-                    onDismissRequest = { modelExpanded = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("None (not loaded yet)") },
-                        onClick = { selectedModel = "None (not loaded yet)"; modelExpanded = false },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Qwen2.5-Coder-0.5B (INT4)") },
-                        onClick = { selectedModel = "Qwen2.5-Coder-0.5B (INT4)"; modelExpanded = false },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Qwen3-0.6B (INT4)") },
-                        onClick = { selectedModel = "Qwen3-0.6B (INT4)"; modelExpanded = false },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("SmolLM2-135M (INT4)") },
-                        onClick = { selectedModel = "SmolLM2-135M (INT4)"; modelExpanded = false },
-                    )
-                }
-            }
+            OutlinedTextField(
+                value = aiConfig.baseUrl,
+                onValueChange = { value -> persistAiConfig { it.copy(baseUrl = value) } },
+                label = { Text("API base URL") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
 
-            ExposedDropdownMenuBox(
-                expanded = quantExpanded,
-                onExpandedChange = { quantExpanded = it },
-            ) {
-                OutlinedTextField(
-                    value = quantization,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Quantization") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = quantExpanded) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .menuAnchor(),
-                )
-                ExposedDropdownMenu(
-                    expanded = quantExpanded,
-                    onDismissRequest = { quantExpanded = false },
-                ) {
-                    listOf("INT4", "INT8", "FP32").forEach { mode ->
-                        DropdownMenuItem(
-                            text = { Text(mode) },
-                            onClick = { quantization = mode; quantExpanded = false },
+            OutlinedTextField(
+                value = aiConfig.apiKey,
+                onValueChange = { value -> persistAiConfig { it.copy(apiKey = value) } },
+                label = { Text("API key") },
+                singleLine = true,
+                visualTransformation = if (apiKeyVisible) {
+                    VisualTransformation.None
+                } else {
+                    PasswordVisualTransformation()
+                },
+                trailingIcon = {
+                    IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
+                        Icon(
+                            imageVector = if (apiKeyVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                            contentDescription = if (apiKeyVisible) "Hide API key" else "Show API key",
                         )
                     }
-                }
-            }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            OutlinedTextField(
+                value = aiConfig.model,
+                onValueChange = { value -> persistAiConfig { it.copy(model = value) } },
+                label = { Text("Model name") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            Text(
+                text = if (aiConfig.isConfigured) "Configured" else "Not configured — AI Chat will not work until set up",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (aiConfig.isConfigured) {
+                    ThemeColors.agentValidator(isDarkMode)
+                } else {
+                    MaterialTheme.colorScheme.error
+                },
+            )
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outline)
 

@@ -3,6 +3,11 @@ package com.pocketide.ui.screens.editor
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.pocketide.data.ai.AiConfigRepository
+import com.pocketide.data.ai.AiResult
+import com.pocketide.data.ai.AiService
+import com.pocketide.data.ai.ChatTurn
+import com.pocketide.data.ai.parseAiResponse
 import com.pocketide.data.execution.CodeExecutor
 import com.pocketide.data.model.AgentStatus
 import com.pocketide.data.model.ChatMessage
@@ -42,6 +47,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     private val repository = FileRepository(application)
     private val codeExecutor = CodeExecutor()
+    private val aiConfigRepository = AiConfigRepository(application)
     private val _state = MutableStateFlow(EditorUiState())
     val state: StateFlow<EditorUiState> = _state.asStateFlow()
 
@@ -82,49 +88,106 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val prompt = _state.value.inputText.trim()
         if (prompt.isBlank()) return
 
+        val historyForRequest = _state.value.messages.mapNotNull { message ->
+            when (message.role) {
+                MessageRole.USER -> ChatTurn(role = "user", content = message.content)
+                MessageRole.ARCHITECT, MessageRole.CODER, MessageRole.VALIDATOR, MessageRole.ASSISTANT ->
+                    ChatTurn(role = "assistant", content = message.content)
+                MessageRole.SYSTEM -> null
+            }
+        }
+
         _state.update {
             it.copy(
                 messages = it.messages + ChatMessage(role = MessageRole.USER, content = prompt),
                 inputText = "",
                 isGenerating = true,
                 architectStatus = AgentStatus.LOADING,
+                coderStatus = AgentStatus.IDLE,
                 activeTab = ActivityTab.AI_CHAT,
             )
         }
 
-        // Placeholder: actual AI inference in Phase 2
+        viewModelScope.launch {
+            val config = aiConfigRepository.load()
+            val service = AiService(config)
+            val result = service.chatCompletion(
+                systemPrompt = AI_SYSTEM_PROMPT,
+                history = historyForRequest,
+                userMessage = prompt,
+            )
+
+            when (result) {
+                is AiResult.Error -> _state.update {
+                    it.copy(
+                        messages = it.messages + ChatMessage(
+                            role = MessageRole.SYSTEM,
+                            content = "Error: ${result.message}",
+                            agentStatus = AgentStatus.ERROR,
+                        ),
+                        architectStatus = AgentStatus.ERROR,
+                        isGenerating = false,
+                    )
+                }
+
+                is AiResult.Success -> applyAiResponse(result.content)
+            }
+        }
+    }
+
+    private fun applyAiResponse(rawContent: String) {
+        val parsed = parseAiResponse(rawContent)
+
         _state.update {
             it.copy(
                 messages = it.messages + ChatMessage(
                     role = MessageRole.ARCHITECT,
-                    content = "[Architect] Plan: Create a simple Python script.\nFile: main.py\nLanguage: Python",
+                    content = parsed.plan ?: rawContent,
                     agentStatus = AgentStatus.DONE,
                 ),
                 architectStatus = AgentStatus.DONE,
-                coderStatus = AgentStatus.GENERATING,
+                coderStatus = if (parsed.code != null) AgentStatus.GENERATING else AgentStatus.IDLE,
             )
         }
 
-        val sampleCode = """def greet(name):
-    print(f"Hello, {name}!")
+        val code = parsed.code
+        val language = parsed.language
+        if (code == null || language == null) {
+            _state.update { it.copy(isGenerating = false) }
+            return
+        }
 
-greet("World")"""
+        val filename = parsed.filename ?: "main.${language.fileExtension}"
+        val s = _state.value
+        val existingIndex = s.files.indexOfFirst { it.name == filename }
+        val newFiles = s.files.toMutableList()
+        val targetIndex: Int
+        if (existingIndex >= 0) {
+            newFiles[existingIndex] = newFiles[existingIndex].copy(content = code, isModified = true)
+            targetIndex = existingIndex
+        } else {
+            newFiles.add(CodeFile(name = filename, language = language, content = code, isModified = true))
+            targetIndex = newFiles.size - 1
+        }
 
         _state.update {
             it.copy(
                 messages = it.messages + ChatMessage(
                     role = MessageRole.CODER,
-                    content = "[Coder] Generated main.py:\n$sampleCode",
+                    content = "Generated $filename:\n```${language.fileExtension}\n$code\n```",
                     agentStatus = AgentStatus.DONE,
                 ),
                 coderStatus = AgentStatus.DONE,
-                files = listOf(
-                    CodeFile(name = "main.py", language = Language.PYTHON, content = sampleCode),
-                ),
-                activeFileIndex = 0,
-                activeFileContent = sampleCode,
+                files = newFiles,
+                activeFileIndex = targetIndex,
+                activeFileContent = code,
                 isGenerating = false,
+                unsavedCount = newFiles.count { f -> f.isModified },
             )
+        }
+
+        viewModelScope.launch {
+            repository.saveFile(s.projectName, newFiles[targetIndex])
         }
     }
 
@@ -276,17 +339,59 @@ greet("World")"""
     }
 
     fun retryRepair() {
+        val s = _state.value
+        val activeFile = s.files.getOrNull(s.activeFileIndex) ?: return
+        if (s.stderr.isBlank()) return
+
         _state.update {
             it.copy(
                 validatorStatus = AgentStatus.GENERATING,
                 executionStatus = ExecutionStatus.IDLE,
             )
         }
-        // Placeholder: actual repair loop in Phase 3
-        _state.update {
-            it.copy(
-                validatorStatus = AgentStatus.DONE,
+
+        viewModelScope.launch {
+            val config = aiConfigRepository.load()
+            val service = AiService(config)
+            val repairPrompt = "The following ${activeFile.language.displayName} code failed with this error:\n" +
+                "${s.stderr}\n\nCode:\n${activeFile.content}\n\n" +
+                "Fix the code. Respond using the same PLAN/FILENAME/code block format."
+
+            val result = service.chatCompletion(
+                systemPrompt = AI_SYSTEM_PROMPT,
+                history = emptyList(),
+                userMessage = repairPrompt,
             )
+
+            when (result) {
+                is AiResult.Error -> _state.update {
+                    it.copy(
+                        validatorStatus = AgentStatus.ERROR,
+                        messages = it.messages + ChatMessage(
+                            role = MessageRole.SYSTEM,
+                            content = "Repair failed: ${result.message}",
+                            agentStatus = AgentStatus.ERROR,
+                        ),
+                    )
+                }
+
+                is AiResult.Success -> {
+                    applyAiResponse(result.content)
+                    _state.update { it.copy(validatorStatus = AgentStatus.DONE) }
+                    runCode()
+                }
+            }
         }
     }
 }
+
+private const val AI_SYSTEM_PROMPT = """You are the coding assistant inside PocketIDE, an on-device Android IDE.
+When the user asks you to write or modify code, respond in exactly this format:
+
+PLAN: <one-sentence description of what you will do>
+FILENAME: <filename with extension, e.g. main.py>
+```<language>
+<the full file content>
+```
+
+Only include one code block. Keep the plan to a single line. Do not add extra commentary outside this format."""
