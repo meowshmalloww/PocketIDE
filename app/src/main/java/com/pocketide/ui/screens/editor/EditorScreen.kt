@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
@@ -35,12 +34,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.pocketide.data.model.Language
 import com.pocketide.ui.components.ActivityBar
 import com.pocketide.ui.components.ActivityTab
 import com.pocketide.ui.components.AiChatPanel
 import com.pocketide.ui.components.FileExplorerPanel
 import com.pocketide.ui.components.FileTabBar
 import com.pocketide.ui.components.TerminalPanel
+import com.pocketide.ui.editor.CodeEditorField
 import com.pocketide.ui.theme.ThemeViewModel
 
 @Composable
@@ -281,9 +282,12 @@ private fun ColumnScope.EditorArea(
                 modifier = Modifier.padding(8.dp),
             )
         } else {
-            BasicTextField(
+            val activeLanguage = state.files.getOrNull(state.activeFileIndex)?.language
+                ?: Language.PYTHON
+            CodeEditorField(
                 value = state.activeFileContent,
                 onValueChange = viewModel::onCodeChange,
+                language = activeLanguage,
                 textStyle = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.onSurface,
