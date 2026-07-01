@@ -61,6 +61,9 @@ dependencies {
     // Core library desugaring for TextMate on API < 33
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 
+    // JavaScript execution engine
+    implementation(libs.rhino)
+
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

@@ -3,6 +3,7 @@ package com.pocketide.ui.screens.editor
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.pocketide.data.execution.CodeExecutor
 import com.pocketide.data.model.AgentStatus
 import com.pocketide.data.model.ChatMessage
 import com.pocketide.data.model.CodeFile
@@ -40,6 +41,7 @@ data class EditorUiState(
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = FileRepository(application)
+    private val codeExecutor = CodeExecutor()
     private val _state = MutableStateFlow(EditorUiState())
     val state: StateFlow<EditorUiState> = _state.asStateFlow()
 
@@ -248,6 +250,10 @@ greet("World")"""
     }
 
     fun runCode() {
+        val s = _state.value
+        val activeFile = s.files.getOrNull(s.activeFileIndex)
+        if (activeFile == null) return
+
         _state.update {
             it.copy(
                 executionStatus = ExecutionStatus.RUNNING,
@@ -256,13 +262,16 @@ greet("World")"""
                 terminalExpanded = true,
             )
         }
-        // Placeholder: actual sandbox execution in Phase 4
-        _state.update {
-            it.copy(
-                executionStatus = ExecutionStatus.PASSED,
-                stdout = "Hello, World!\n",
-                stderr = "",
-            )
+
+        viewModelScope.launch {
+            val result = codeExecutor.execute(activeFile.content, activeFile.language)
+            _state.update {
+                it.copy(
+                    executionStatus = result.status,
+                    stdout = result.stdout,
+                    stderr = result.stderr,
+                )
+            }
         }
     }
 

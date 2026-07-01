@@ -13,6 +13,7 @@ materialIconsExtended = "1.7.6"
 lifecycleViewmodelCompose = "2.8.7"
 soraEditor = "0.24.4"
 desugarJdkLibs = "2.1.5"
+rhino = "1.7.15"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -38,6 +39,7 @@ sora-language-textmate = { group = "io.github.rosemoe", name = "language-textmat
 sora-language-treesitter = { group = "io.github.rosemoe", name = "language-treesitter" }
 sora-language-java = { group = "io.github.rosemoe", name = "language-java" }
 desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugarJdkLibs" }
+rhino = { group = "org.mozilla", name = "rhino", version.ref = "rhino" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
