@@ -1,32 +1,38 @@
 package com.pocketide.ui.screens.settings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -35,18 +41,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.pocketide.data.ai.AiConfig
 import com.pocketide.data.ai.AiConfigRepository
+import com.pocketide.data.ai.Quantization
 import com.pocketide.data.model.Language
 import com.pocketide.ui.theme.ThemeColors
 import com.pocketide.ui.theme.ThemeViewModel
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
@@ -55,212 +62,227 @@ fun SettingsScreen(
     val context = LocalContext.current
     val aiConfigRepository = remember { AiConfigRepository(context) }
     var aiConfig by remember { mutableStateOf(aiConfigRepository.load()) }
-    var apiKeyVisible by remember { mutableStateOf(false) }
-    var powerSaving by remember { mutableStateOf(false) }
-    var thermalAware by remember { mutableStateOf(true) }
-    var adaptiveCores by remember { mutableStateOf(true) }
-    var maxRepairIterations by remember { mutableStateOf(3f) }
-    val enabledLanguages = remember { mutableStateOf(Language.entries.toSet()) }
+    val isDarkMode by themeViewModel.isDarkMode.collectAsState()
 
     fun persistAiConfig(update: (AiConfig) -> AiConfig) {
         aiConfig = update(aiConfig)
         aiConfigRepository.save(aiConfig)
     }
 
-    val isDarkMode by themeViewModel.isDarkMode.collectAsState()
-
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .background(MaterialTheme.colorScheme.background)
+            .imePadding(),
     ) {
-    Scaffold(
-        modifier = Modifier.safeDrawingPadding(),
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "Settings",
-                        style = MaterialTheme.typography.titleLarge.copy(
-                            fontWeight = FontWeight.SemiBold,
-                        ),
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.primary,
-                ),
-            )
-        },
-    ) { innerPadding ->
-        Column(
+        // Top bar with status bar padding
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(innerPadding)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(
+                    top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding(),
+                )
+                .height(44.dp)
+                .padding(horizontal = 4.dp),
         ) {
-            // --- Appearance Section ---
-            SectionHeader("Appearance")
-
-            SwitchRow(
-                label = "Dark mode",
-                description = "Toggle between dark and light theme",
-                checked = isDarkMode,
-                onCheckedChange = { themeViewModel.setDarkMode(it) },
-            )
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-
-            // --- AI Model Section ---
-            SectionHeader("AI Model")
-            Text(
-                text = "Connect to any OpenAI-compatible chat completions API.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            OutlinedTextField(
-                value = aiConfig.baseUrl,
-                onValueChange = { value -> persistAiConfig { it.copy(baseUrl = value) } },
-                label = { Text("API base URL") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            OutlinedTextField(
-                value = aiConfig.apiKey,
-                onValueChange = { value -> persistAiConfig { it.copy(apiKey = value) } },
-                label = { Text("API key") },
-                singleLine = true,
-                visualTransformation = if (apiKeyVisible) {
-                    VisualTransformation.None
-                } else {
-                    PasswordVisualTransformation()
-                },
-                trailingIcon = {
-                    IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
-                        Icon(
-                            imageVector = if (apiKeyVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                            contentDescription = if (apiKeyVisible) "Hide API key" else "Show API key",
-                        )
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            OutlinedTextField(
-                value = aiConfig.model,
-                onValueChange = { value -> persistAiConfig { it.copy(model = value) } },
-                label = { Text("Model name") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Text(
-                text = if (aiConfig.isConfigured) "Configured" else "Not configured — AI Chat will not work until set up",
-                style = MaterialTheme.typography.labelSmall,
-                color = if (aiConfig.isConfigured) {
-                    ThemeColors.agentValidator(isDarkMode)
-                } else {
-                    MaterialTheme.colorScheme.error
-                },
-            )
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-
-            // --- Optimization Section ---
-            SectionHeader("Optimization")
-
-            SwitchRow(
-                label = "Power saving mode",
-                description = "Use little cores for decode, reduce thread count",
-                checked = powerSaving,
-                onCheckedChange = { powerSaving = it },
-            )
-
-            SwitchRow(
-                label = "Thermal-aware inference",
-                description = "Reduce performance when device throttles",
-                checked = thermalAware,
-                onCheckedChange = { thermalAware = it },
-            )
-
-            SwitchRow(
-                label = "Adaptive core selection",
-                description = "Big cores for prefill, little cores for decode",
-                checked = adaptiveCores,
-                onCheckedChange = { adaptiveCores = it },
-            )
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-
-            // --- Agent Section ---
-            SectionHeader("Agent Configuration")
-
-            Text(
-                text = "Max repair iterations: ${maxRepairIterations.toInt()}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Slider(
-                value = maxRepairIterations,
-                onValueChange = { maxRepairIterations = it },
-                valueRange = 1f..10f,
-                steps = 8,
-            )
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-
-            // --- Sandbox Section ---
-            SectionHeader("Sandbox Languages")
-
-            Language.entries.forEach { language ->
-                val enabled = language in enabledLanguages.value
-                SwitchRow(
-                    label = language.displayName,
-                    description = ".${language.fileExtension} files",
-                    checked = enabled,
-                    onCheckedChange = { isChecked ->
-                        enabledLanguages.value = if (isChecked) {
-                            enabledLanguages.value + language
-                        } else {
-                            enabledLanguages.value - language
-                        }
-                    },
+            IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp),
                 )
             }
+            Text(
+                text = "Settings",
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
-    }
+
+        // Scrollable content
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            // === Appearance ===
+            SectionHeader("Appearance")
+            SettingsGroup {
+                CompactToggleRow(
+                    label = "Dark mode",
+                    checked = isDarkMode,
+                    onCheckedChange = { themeViewModel.setDarkMode(it) },
+                )
+            }
+
+            // === On-Device Model ===
+            SectionHeader("On-Device Model")
+            SettingsGroup {
+                Text(
+                    text = "Load a local .pte model for fully offline inference.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = aiConfig.modelPath,
+                    onValueChange = { value -> persistAiConfig { it.copy(modelPath = value) } },
+                    label = { Text("Model path", style = MaterialTheme.typography.labelSmall) },
+                    placeholder = { Text("/sdcard/models/qwen3-0.6b.pte") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    text = "Quantization",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Quantization.entries.forEach { quant ->
+                        FilterChip(
+                            selected = aiConfig.quantization == quant,
+                            onClick = { persistAiConfig { it.copy(quantization = quant) } },
+                            label = { Text(quant.displayName, style = MaterialTheme.typography.labelSmall) },
+                        )
+                    }
+                }
+                StatusPill(
+                    text = if (aiConfig.isConfigured) "Model configured" else "No model loaded",
+                    isError = !aiConfig.isConfigured,
+                    isDark = isDarkMode,
+                )
+            }
+
+            // === Optimization ===
+            SectionHeader("Optimization")
+            SettingsGroup {
+                CompactToggleRow(
+                    label = "Power saving",
+                    checked = aiConfig.powerSaving,
+                    onCheckedChange = { value -> persistAiConfig { it.copy(powerSaving = value) } },
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                CompactToggleRow(
+                    label = "Thermal-aware",
+                    checked = aiConfig.thermalAware,
+                    onCheckedChange = { value -> persistAiConfig { it.copy(thermalAware = value) } },
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                CompactToggleRow(
+                    label = "Adaptive cores",
+                    checked = aiConfig.adaptiveCores,
+                    onCheckedChange = { value -> persistAiConfig { it.copy(adaptiveCores = value) } },
+                )
+            }
+
+            // === Agent ===
+            SectionHeader("Agent")
+            SettingsGroup {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = "Max repair iterations",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = "${aiConfig.maxRepairIterations}",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                }
+                Slider(
+                    value = aiConfig.maxRepairIterations.toFloat(),
+                    onValueChange = { value ->
+                        persistAiConfig { it.copy(maxRepairIterations = value.toInt()) }
+                    },
+                    valueRange = 1f..10f,
+                    steps = 8,
+                    modifier = Modifier.height(32.dp),
+                )
+            }
+
+            // === Sandbox Languages (bottom) ===
+            SectionHeader("Sandbox Languages")
+            SettingsGroup {
+                val enabledLanguages = remember { mutableStateOf(Language.entries.toSet()) }
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Language.entries.forEach { language ->
+                        val enabled = language in enabledLanguages.value
+                        FilterChip(
+                            selected = enabled,
+                            onClick = {
+                                enabledLanguages.value = if (enabled) {
+                                    enabledLanguages.value - language
+                                } else {
+                                    enabledLanguages.value + language
+                                }
+                            },
+                            label = { Text(language.displayName, style = MaterialTheme.typography.labelSmall) },
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+        }
     }
 }
 
 @Composable
 private fun SectionHeader(text: String) {
     Text(
-        text = text,
-        style = MaterialTheme.typography.titleMedium.copy(
-            fontWeight = FontWeight.SemiBold,
+        text = text.uppercase(),
+        style = MaterialTheme.typography.labelSmall.copy(
+            fontWeight = FontWeight.Bold,
+            letterSpacing = androidx.compose.ui.unit.TextUnit(1.5f, androidx.compose.ui.unit.TextUnitType.Sp),
         ),
-        color = MaterialTheme.colorScheme.primary,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
     )
 }
 
 @Composable
-private fun SwitchRow(
+private fun SettingsGroup(
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun CompactToggleRow(
     label: String,
-    description: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
@@ -269,20 +291,49 @@ private fun SwitchRow(
         horizontalArrangement = Arrangement.SpaceBetween,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 2.dp),
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = description,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier.scale(0.7f),
+        )
+    }
+}
+
+@Composable
+private fun StatusPill(
+    text: String,
+    isError: Boolean,
+    isDark: Boolean,
+) {
+    val color = if (isError) MaterialTheme.colorScheme.error else ThemeColors.agentCoder(isDark)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(color.copy(alpha = 0.12f))
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(color),
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+            fontWeight = FontWeight.Medium,
+        )
     }
 }

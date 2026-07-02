@@ -4,7 +4,9 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
@@ -15,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TransformedText
@@ -26,6 +29,7 @@ import com.pocketide.data.model.Language
 // the line-number gutter to fit the largest line number without wrapping.
 private const val MONOSPACE_WIDTH_RATIO = 0.6f
 private const val GUTTER_HORIZONTAL_PADDING_DP = 12
+private const val LINE_HEIGHT_MULTIPLIER = 1.4f
 
 @Composable
 fun CodeEditorField(
@@ -47,10 +51,13 @@ fun CodeEditorField(
         (digitCount * textStyle.fontSize.value * MONOSPACE_WIDTH_RATIO).dp + GUTTER_HORIZONTAL_PADDING_DP.dp
     }
 
-    val verticalScrollState = rememberScrollState()
+    val scrollState = rememberScrollState()
     val horizontalScrollState = rememberScrollState()
+    val density = LocalDensity.current
+    val lineHeightDp = with(density) { textStyle.fontSize.toDp() } * LINE_HEIGHT_MULTIPLIER
+    val contentHeight = (lineCount * lineHeightDp.value).dp
 
-    Row(modifier = modifier.verticalScroll(verticalScrollState)) {
+    Row(modifier = modifier.verticalScroll(scrollState)) {
         Column(
             horizontalAlignment = Alignment.End,
             modifier = Modifier
@@ -69,13 +76,15 @@ fun CodeEditorField(
         Box(
             modifier = Modifier
                 .weight(1f)
-                .horizontalScroll(horizontalScrollState),
+                .horizontalScroll(horizontalScrollState)
+                .requiredHeight(contentHeight),
         ) {
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,
                 textStyle = textStyle,
                 visualTransformation = transformation,
+                modifier = Modifier.fillMaxWidth(),
             )
         }
     }

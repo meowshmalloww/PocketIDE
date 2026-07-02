@@ -4,74 +4,76 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
 
-// === DARK THEME (Neutral Charcoal) ===
-val DarkBackground = Color(0xFF1E1E1E)
-val DarkSurface = Color(0xFF252525)
-val DarkSurfaceVariant = Color(0xFF2D2D2D)
-val DarkPrimary = Color(0xFFA8A8A8)
-val DarkOnPrimary = Color(0xFF1E1E1E)
-val DarkSecondary = Color(0xFF3A3A3A)
-val DarkOnSurface = Color(0xFFD4D4D4)
-val DarkOnSurfaceVariant = Color(0xFF808080)
-val DarkOutline = Color(0xFF383838)
-val DarkError = Color(0xFFEF5350)
+// === DARK THEME (Carbon + White) ===
+val DarkBackground = Color(0xFF0E0E10)
+val DarkSurface = Color(0xFF161618)
+val DarkSurfaceVariant = Color(0xFF1E1E22)
+val DarkPrimary = Color(0xFFE8E8E8)
+val DarkOnPrimary = Color(0xFF0E0E10)
+val DarkSecondary = Color(0xFF2A2A2E)
+val DarkOnSurface = Color(0xFFD4D4D8)
+val DarkOnSurfaceVariant = Color(0xFF8B8B92)
+val DarkOutline = Color(0xFF2E2E34)
+val DarkError = Color(0xFFEF4444)
 
-val DarkActivityBarBg = Color(0xFF181818)
-val DarkActivityBarActive = Color(0xFFE0E0E0)
-val DarkActivityBarInactive = Color(0xFF707070)
+val DarkActivityBarBg = Color(0xFF0A0A0C)
+val DarkActivityBarActive = Color(0xFFE8E8E8)
+val DarkActivityBarInactive = Color(0xFF5C5C66)
 
-val DarkChatUserBubble = Color(0xFF303030)
-val DarkChatAssistantBubble = Color(0xFF282828)
-val DarkChatUserText = Color(0xFFE0E0E0)
-val DarkChatAssistantText = Color(0xFFC0C0C0)
-val DarkChatAgentLabel = Color(0xFF808080)
+val DarkChatUserBubble = Color(0xFF1E1E22)
+val DarkChatAssistantBubble = Color(0xFF161618)
+val DarkChatUserText = Color(0xFFD4D4D8)
+val DarkChatAssistantText = Color(0xFFB4B4BC)
+val DarkChatAgentLabel = Color(0xFF8B8B92)
 
-val DarkConsoleBg = Color(0xFF141414)
-val DarkConsoleStdout = Color(0xFFB0B0B0)
-val DarkConsoleStderr = Color(0xFFEF5350)
-val DarkConsoleSuccess = Color(0xFF81C784)
+val DarkConsoleBg = Color(0xFF08080A)
+val DarkConsoleStdout = Color(0xFFB8B8C0)
+val DarkConsoleStderr = Color(0xFFEF4444)
+val DarkConsoleSuccess = Color(0xFF22C55E)
 
-val DarkAgentArchitect = Color(0xFFB0B0B0)
-val DarkAgentCoder = Color(0xFF81C784)
-val DarkAgentValidator = Color(0xFFCE93D8)
-val DarkAgentIdle = Color(0xFF707070)
+val DarkAgentArchitect = Color(0xFFE8E8E8)
+val DarkAgentCoder = Color(0xFF22C55E)
+val DarkAgentValidator = Color(0xFF38BDF8)
+val DarkAgentIdle = Color(0xFF5C5C66)
 
-// === LIGHT THEME (Clean Paper) ===
-val LightBackground = Color(0xFFF5F5F5)
+// === LIGHT THEME (Warm Paper + Amber) ===
+val LightBackground = Color(0xFFFAF8F5)
 val LightSurface = Color(0xFFFFFFFF)
-val LightSurfaceVariant = Color(0xFFECECEC)
-val LightPrimary = Color(0xFF505050)
+val LightSurfaceVariant = Color(0xFFF3F0EB)
+val LightPrimary = Color(0xFFB45309)
 val LightOnPrimary = Color(0xFFFFFFFF)
-val LightSecondary = Color(0xFFD0D0D0)
-val LightOnSurface = Color(0xFF1E1E1E)
-val LightOnSurfaceVariant = Color(0xFF666666)
-val LightOutline = Color(0xFFD6D6D6)
-val LightError = Color(0xFFC62828)
+val LightSecondary = Color(0xFFE7E2D9)
+val LightOnSurface = Color(0xFF1C1917)
+val LightOnSurfaceVariant = Color(0xFF78716C)
+val LightOutline = Color(0xFFD6D3D1)
+val LightError = Color(0xFFDC2626)
 
-val LightActivityBarBg = Color(0xFFE8E8E8)
-val LightActivityBarActive = Color(0xFF2A2A2A)
-val LightActivityBarInactive = Color(0xFF888888)
+val LightActivityBarBg = Color(0xFFF3F0EB)
+val LightActivityBarActive = Color(0xFFB45309)
+val LightActivityBarInactive = Color(0xFFA8A29E)
 
-val LightChatUserBubble = Color(0xFFE8E8E8)
-val LightChatAssistantBubble = Color(0xFFF2F2F2)
-val LightChatUserText = Color(0xFF1E1E1E)
-val LightChatAssistantText = Color(0xFF444444)
-val LightChatAgentLabel = Color(0xFF888888)
+val LightChatUserBubble = Color(0xFFFEF3C7)
+val LightChatAssistantBubble = Color(0xFFFAF8F5)
+val LightChatUserText = Color(0xFF1C1917)
+val LightChatAssistantText = Color(0xFF44403C)
+val LightChatAgentLabel = Color(0xFF78716C)
 
-val LightConsoleBg = Color(0xFFE0E0E0)
-val LightConsoleStdout = Color(0xFF333333)
-val LightConsoleStderr = Color(0xFFC62828)
-val LightConsoleSuccess = Color(0xFF2E7D32)
+val LightConsoleBg = Color(0xFFF3F0EB)
+val LightConsoleStdout = Color(0xFF92400E)
+val LightConsoleStderr = Color(0xFFDC2626)
+val LightConsoleSuccess = Color(0xFF16A34A)
 
-val LightAgentArchitect = Color(0xFF505050)
-val LightAgentCoder = Color(0xFF2E7D32)
-val LightAgentValidator = Color(0xFF6A1B9A)
-val LightAgentIdle = Color(0xFF888888)
+val LightAgentArchitect = Color(0xFFB45309)
+val LightAgentCoder = Color(0xFF16A34A)
+val LightAgentValidator = Color(0xFF0284C7)
+val LightAgentIdle = Color(0xFFA8A29E)
 
 // === COLOR SCHEMES ===
 val PocketIDEDarkScheme = darkColorScheme(
     primary = DarkPrimary,
     onPrimary = DarkOnPrimary,
+    primaryContainer = Color(0xFF2A2A2E),
+    onPrimaryContainer = Color(0xFFD4D4D8),
     secondary = DarkSecondary,
     background = DarkBackground,
     onBackground = DarkOnSurface,
@@ -86,6 +88,8 @@ val PocketIDEDarkScheme = darkColorScheme(
 val PocketIDELightScheme = lightColorScheme(
     primary = LightPrimary,
     onPrimary = LightOnPrimary,
+    primaryContainer = Color(0xFFFDE68A),
+    onPrimaryContainer = Color(0xFF78350F),
     secondary = LightSecondary,
     background = LightBackground,
     onBackground = LightOnSurface,

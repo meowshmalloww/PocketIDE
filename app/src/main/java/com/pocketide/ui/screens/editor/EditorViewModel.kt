@@ -36,11 +36,14 @@ data class EditorUiState(
     val architectStatus: AgentStatus = AgentStatus.IDLE,
     val coderStatus: AgentStatus = AgentStatus.IDLE,
     val validatorStatus: AgentStatus = AgentStatus.IDLE,
-    val batteryLevel: Int = 100,
-    val activeTab: ActivityTab = ActivityTab.EXPLORER,
-    val terminalExpanded: Boolean = false,
+    val activeTab: ActivityTab = ActivityTab.EDITOR,
+    val terminalExpanded: Boolean = true,
     val projectName: String = "default",
     val unsavedCount: Int = 0,
+    val projects: List<String> = emptyList(),
+    val showProjectDialog: Boolean = false,
+    val showExplorer: Boolean = true,
+    val isAiTabActive: Boolean = false,
 )
 
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
@@ -52,7 +55,103 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     val state: StateFlow<EditorUiState> = _state.asStateFlow()
 
     init {
+        loadProjects()
         loadFiles()
+    }
+
+    private fun loadProjects() {
+        viewModelScope.launch {
+            val projects = repository.listProjects()
+            val currentName = _state.value.projectName
+            val updated = if (projects.contains(currentName)) projects else projects + currentName
+            _state.update { it.copy(projects = updated) }
+        }
+    }
+
+    fun showProjectDialog() {
+        loadProjects()
+        _state.update { it.copy(showProjectDialog = true) }
+    }
+
+    fun hideProjectDialog() {
+        _state.update { it.copy(showProjectDialog = false) }
+    }
+
+    fun createProject(name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            repository.createProject(trimmed)
+            val updated = repository.listProjects()
+            _state.update {
+                it.copy(
+                    projects = updated,
+                    projectName = trimmed,
+                    showProjectDialog = false,
+                    files = emptyList(),
+                    activeFileIndex = 0,
+                    activeFileContent = "",
+                    messages = emptyList(),
+                    stdout = "",
+                    stderr = "",
+                    executionStatus = ExecutionStatus.IDLE,
+                    unsavedCount = 0,
+                )
+            }
+            loadFiles()
+        }
+    }
+
+    fun switchProject(name: String) {
+        if (name == _state.value.projectName) {
+            _state.update { it.copy(showProjectDialog = false) }
+            return
+        }
+        viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    projectName = name,
+                    showProjectDialog = false,
+                    files = emptyList(),
+                    activeFileIndex = 0,
+                    activeFileContent = "",
+                    messages = emptyList(),
+                    stdout = "",
+                    stderr = "",
+                    executionStatus = ExecutionStatus.IDLE,
+                    unsavedCount = 0,
+                )
+            }
+            loadFiles()
+        }
+    }
+
+    fun deleteProject(name: String) {
+        val current = _state.value
+        if (current.projects.size <= 1 && name == current.projectName) return
+        viewModelScope.launch {
+            repository.deleteProject(name)
+            val updated = repository.listProjects()
+            if (name == current.projectName && updated.isNotEmpty()) {
+                _state.update {
+                    it.copy(
+                        projects = updated,
+                        projectName = updated.first(),
+                        files = emptyList(),
+                        activeFileIndex = 0,
+                        activeFileContent = "",
+                        messages = emptyList(),
+                        stdout = "",
+                        stderr = "",
+                        executionStatus = ExecutionStatus.IDLE,
+                        unsavedCount = 0,
+                    )
+                }
+                loadFiles()
+            } else {
+                _state.update { it.copy(projects = updated) }
+            }
+        }
     }
 
     private fun loadFiles() {
@@ -74,6 +173,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setActiveTab(tab: ActivityTab) {
         _state.update { it.copy(activeTab = tab) }
+    }
+
+    fun toggleExplorer() {
+        _state.update { it.copy(showExplorer = !it.showExplorer) }
+    }
+
+    fun setAiTabActive(active: Boolean) {
+        _state.update { it.copy(isAiTabActive = active) }
     }
 
     fun toggleTerminal() {

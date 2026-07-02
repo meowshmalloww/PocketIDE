@@ -118,6 +118,15 @@ LAYER 6: APPLICATION SANDBOX ENVIRONMENT (The Runtime)
 - No network access (true offline validation)
 - Feeds errors back to Validator agent for repair loop
 - tree-sitter for syntax validation before execution
+- HARDWARE BRIDGE (Phase 2 — see HARDWARE_BRIDGE.md):
+  AI-generated code can call Android hardware APIs (camera, flashlight,
+  GPS, sensors, audio, storage) and the on-device LLM itself (ai.ask()).
+  Bridge objects injected into sandbox runtime as global variables.
+  Self-repair loop catches hardware API errors (permission denied,
+  sensor unavailable, invalid params) and feeds them back to LLM.
+  Language-agnostic: same bridge API for JS, Python, future languages.
+  NOT the core submission — built on top of working self-repair loop
+  as a WOW-factor multiplier. Build only after Phase 1 is complete.
 
 LAYER 7: BENCHMARKING & PROOF ARTIFACTS
 - Built-in benchmark mode: tokens/sec, TTFT, memory RSS, model size, energy/token
