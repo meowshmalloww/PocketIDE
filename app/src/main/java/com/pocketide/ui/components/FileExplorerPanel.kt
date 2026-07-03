@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pocketide.data.model.CodeFile
+import com.pocketide.data.model.Language
 
 @Composable
 fun FileExplorerPanel(
@@ -156,27 +157,21 @@ private fun FileExplorerItem(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .height(36.dp)
-            .background(if (isActive) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
+            .height(34.dp)
+            .padding(horizontal = 8.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (isActive) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f) else Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(start = if (isActive) 0.dp else 4.dp, end = 6.dp),
+            .padding(horizontal = 8.dp),
     ) {
-        // Active indicator — left border bar
-        if (isActive) {
-            Box(
-                modifier = Modifier
-                    .width(3.dp)
-                    .fillMaxHeight()
-                    .background(activeColor),
-            )
-        }
-        Spacer(modifier = Modifier.width(8.dp))
-        Icon(
-            imageVector = Icons.Filled.Description,
-            contentDescription = file.name,
-            tint = if (isActive) activeColor else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(16.dp),
+        // Language color dot
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(languageColor(file.language)),
         )
+        Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = file.name,
             style = MaterialTheme.typography.labelSmall,
@@ -184,30 +179,48 @@ private fun FileExplorerItem(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
-                .weight(1f)
-                .padding(start = 6.dp),
+                .weight(1f),
         )
         if (file.isModified) {
-            Text(
-                text = "\u2022",
-                style = MaterialTheme.typography.labelSmall,
-                color = activeColor,
-                modifier = Modifier.padding(end = 8.dp),
+            Box(
+                modifier = Modifier
+                    .size(5.dp)
+                    .clip(RoundedCornerShape(2.5.dp))
+                    .background(activeColor)
+                    .padding(end = 8.dp),
             )
         }
-        // Delete button — far right, separated from filename
+        // Delete button
         Box(
             modifier = Modifier
-                .size(32.dp)
+                .size(26.dp)
+                .clip(RoundedCornerShape(13.dp))
                 .clickable(onClick = onDelete),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = Icons.Filled.Close,
                 contentDescription = "Delete ${file.name}",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                 modifier = Modifier.size(14.dp),
             )
         }
     }
+}
+
+private fun languageColor(language: Language): Color = when (language) {
+    Language.PYTHON -> Color(0xFF4584B6)
+    Language.JAVASCRIPT -> Color(0xFFF7DF1E)
+    Language.TYPESCRIPT -> Color(0xFF3178C6)
+    Language.KOTLIN -> Color(0xFF7F52FF)
+    Language.DART -> Color(0xFF0175C2)
+    Language.SQL -> Color(0xFFE38900)
+    Language.HTML -> Color(0xFFE34F26)
+    Language.CSS -> Color(0xFF1572B6)
+    Language.JAVA -> Color(0xFFED8B00)
+    Language.LUA -> Color(0xFF2C2D72)
+    Language.SHELL -> Color(0xFF4EAA25)
+    Language.YAML -> Color(0xFFCB171E)
+    Language.MARKDOWN -> Color(0xFF6C7A89)
+    Language.JSON -> Color(0xFFA0A500)
 }

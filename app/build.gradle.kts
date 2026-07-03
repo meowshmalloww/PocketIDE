@@ -19,6 +19,12 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            // ExecuTorch AAR ships arm64-v8a and x86_64. Hackathon target is
+            // Arm-only, but keep x86_64 for emulator testing on dev machines.
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildTypes {
@@ -68,6 +74,18 @@ dependencies {
 
     // JavaScript execution engine
     implementation(libs.rhino)
+
+    // Lua execution engine
+    implementation(libs.luaj.jse)
+
+    // Java execution engine (BeanShell interpreter)
+    implementation(libs.beanshell)
+
+    // On-device LLM inference — ExecuTorch (.pte models, NPU acceleration)
+    implementation(libs.executorch.android)
+
+    // On-device LLM inference — llama.cpp (.gguf models, broad model ecosystem)
+    implementation(libs.llamacpp.kotlin)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

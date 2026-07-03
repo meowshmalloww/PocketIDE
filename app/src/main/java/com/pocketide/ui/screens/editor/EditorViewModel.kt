@@ -7,14 +7,18 @@ import com.pocketide.data.ai.AiConfigRepository
 import com.pocketide.data.ai.AiResult
 import com.pocketide.data.ai.AiService
 import com.pocketide.data.ai.ChatTurn
+import com.pocketide.data.ai.ExecutorchLlmRunner
+import com.pocketide.data.ai.LlamaCppRunner
 import com.pocketide.data.ai.parseAiResponse
 import com.pocketide.data.execution.CodeExecutor
 import com.pocketide.data.model.AgentStatus
+import com.pocketide.data.model.AiMode
 import com.pocketide.data.model.ChatMessage
 import com.pocketide.data.model.CodeFile
 import com.pocketide.data.model.ExecutionStatus
 import com.pocketide.data.model.Language
 import com.pocketide.data.model.MessageRole
+import com.pocketide.data.model.ModelMode
 import com.pocketide.data.repository.FileRepository
 import com.pocketide.ui.components.ActivityTab
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,7 +36,12 @@ data class EditorUiState(
     val activeFileContent: String = "",
     val stdout: String = "",
     val stderr: String = "",
+    val warnings: String = "",
     val executionStatus: ExecutionStatus = ExecutionStatus.IDLE,
+    val errorLine: Int? = null,
+    val errorColumn: Int? = null,
+    val errorType: String? = null,
+    val executionDurationMs: Long = 0,
     val architectStatus: AgentStatus = AgentStatus.IDLE,
     val coderStatus: AgentStatus = AgentStatus.IDLE,
     val validatorStatus: AgentStatus = AgentStatus.IDLE,
@@ -44,15 +53,29 @@ data class EditorUiState(
     val showProjectDialog: Boolean = false,
     val showExplorer: Boolean = true,
     val isAiTabActive: Boolean = false,
+    val showAiOverlay: Boolean = false,
+    val aiMode: AiMode = AiMode.CODE,
+    val modelMode: ModelMode = ModelMode.SINGLE,
 )
 
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = FileRepository(application)
-    private val codeExecutor = CodeExecutor()
+    private val codeExecutor = CodeExecutor(application)
     private val aiConfigRepository = AiConfigRepository(application)
+    private val executorchRunner = ExecutorchLlmRunner()
+    private val llamaCppRunner = LlamaCppRunner(application)
     private val _state = MutableStateFlow(EditorUiState())
     val state: StateFlow<EditorUiState> = _state.asStateFlow()
+
+    override fun onCleared() {
+        super.onCleared()
+        // Release native LLM resources when the ViewModel is destroyed.
+        viewModelScope.launch {
+            executorchRunner.release()
+            llamaCppRunner.release()
+        }
+    }
 
     init {
         loadProjects()
@@ -187,14 +210,40 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         _state.update { it.copy(terminalExpanded = !it.terminalExpanded) }
     }
 
+    fun toggleAiOverlay() {
+        _state.update { it.copy(showAiOverlay = !it.showAiOverlay) }
+    }
+
+    fun setAiMode(mode: AiMode) {
+        _state.update { it.copy(aiMode = mode) }
+    }
+
+    fun setModelMode(mode: ModelMode) {
+        _state.update { it.copy(modelMode = mode) }
+    }
+
     fun onInputChange(text: String) {
         _state.update { it.copy(inputText = text) }
+    }
+
+    fun newChat() {
+        _state.update {
+            it.copy(
+                messages = emptyList(),
+                inputText = "",
+                isGenerating = false,
+                architectStatus = AgentStatus.IDLE,
+                coderStatus = AgentStatus.IDLE,
+                validatorStatus = AgentStatus.IDLE,
+            )
+        }
     }
 
     fun sendMessage() {
         val prompt = _state.value.inputText.trim()
         if (prompt.isBlank()) return
 
+        val currentMode = _state.value.aiMode
         val historyForRequest = _state.value.messages.mapNotNull { message ->
             when (message.role) {
                 MessageRole.USER -> ChatTurn(role = "user", content = message.content)
@@ -217,9 +266,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             val config = aiConfigRepository.load()
-            val service = AiService(config)
+            val service = AiService(executorchRunner, llamaCppRunner, config)
+            val systemPrompt = when (currentMode) {
+                AiMode.CODE -> CODE_MODE_PROMPT
+                AiMode.ASK -> ASK_MODE_PROMPT
+                AiMode.PLAN -> PLAN_MODE_PROMPT
+            }
             val result = service.chatCompletion(
-                systemPrompt = AI_SYSTEM_PROMPT,
+                systemPrompt = systemPrompt,
                 history = historyForRequest,
                 userMessage = prompt,
             )
@@ -237,7 +291,33 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 }
 
-                is AiResult.Success -> applyAiResponse(result.content)
+                is AiResult.Success -> {
+                    when (currentMode) {
+                        AiMode.CODE -> applyAiResponse(result.content)
+                        AiMode.ASK -> _state.update {
+                            it.copy(
+                                messages = it.messages + ChatMessage(
+                                    role = MessageRole.ASSISTANT,
+                                    content = result.content,
+                                    agentStatus = AgentStatus.DONE,
+                                ),
+                                architectStatus = AgentStatus.DONE,
+                                isGenerating = false,
+                            )
+                        }
+                        AiMode.PLAN -> _state.update {
+                            it.copy(
+                                messages = it.messages + ChatMessage(
+                                    role = MessageRole.ARCHITECT,
+                                    content = result.content,
+                                    agentStatus = AgentStatus.DONE,
+                                ),
+                                architectStatus = AgentStatus.DONE,
+                                isGenerating = false,
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -429,6 +509,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 executionStatus = ExecutionStatus.RUNNING,
                 stdout = "",
                 stderr = "",
+                warnings = "",
+                errorLine = null,
+                errorColumn = null,
+                errorType = null,
                 terminalExpanded = true,
             )
         }
@@ -440,6 +524,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     executionStatus = result.status,
                     stdout = result.stdout,
                     stderr = result.stderr,
+                    warnings = result.warnings,
+                    errorLine = result.errorLine,
+                    errorColumn = result.errorColumn,
+                    errorType = result.errorType,
+                    executionDurationMs = result.durationMs,
                 )
             }
         }
@@ -459,13 +548,27 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             val config = aiConfigRepository.load()
-            val service = AiService(config)
-            val repairPrompt = "The following ${activeFile.language.displayName} code failed with this error:\n" +
-                "${s.stderr}\n\nCode:\n${activeFile.content}\n\n" +
-                "Fix the code. Respond using the same PLAN/FILENAME/code block format."
+            val service = AiService(executorchRunner, llamaCppRunner, config)
+            val repairPrompt = buildString {
+                appendLine("The following ${activeFile.language.displayName} code failed with this error:")
+                appendLine("Error type: ${s.errorType ?: "Unknown"}")
+                if (s.errorLine != null) {
+                    appendLine("Error at line: ${s.errorLine}${if (s.errorColumn != null) ", column: ${s.errorColumn}" else ""}")
+                }
+                if (s.warnings.isNotBlank()) {
+                    appendLine("Warnings: ${s.warnings}")
+                }
+                appendLine("Error message: ${s.stderr}")
+                appendLine("Execution time: ${s.executionDurationMs}ms")
+                appendLine()
+                appendLine("Code:")
+                appendLine(activeFile.content)
+                appendLine()
+                appendLine("Fix the code. Respond using the same PLAN/FILENAME/code block format.")
+            }
 
             val result = service.chatCompletion(
-                systemPrompt = AI_SYSTEM_PROMPT,
+                systemPrompt = CODE_MODE_PROMPT,
                 history = emptyList(),
                 userMessage = repairPrompt,
             )
@@ -492,7 +595,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 }
 
-private const val AI_SYSTEM_PROMPT = """You are the coding assistant inside PocketIDE, an on-device Android IDE.
+private const val CODE_MODE_PROMPT = """You are the coding assistant inside PocketIDE, an on-device Android IDE.
 When the user asks you to write or modify code, respond in exactly this format:
 
 PLAN: <one-sentence description of what you will do>
@@ -502,3 +605,20 @@ FILENAME: <filename with extension, e.g. main.py>
 ```
 
 Only include one code block. Keep the plan to a single line. Do not add extra commentary outside this format."""
+
+private const val ASK_MODE_PROMPT = """You are a knowledgeable assistant inside PocketIDE, an on-device Android IDE.
+The user is in ASK mode — they want explanations, not file modifications.
+Answer questions about code, explain concepts, review snippets, and provide guidance.
+Do NOT write code blocks or attempt to create files. Respond in plain text.
+If the user asks you to write code, suggest they switch to CODE mode."""
+
+private const val PLAN_MODE_PROMPT = """You are a planning assistant inside PocketIDE, an on-device Android IDE.
+The user is in PLAN mode — they want a detailed plan before any code is written.
+Analyze the request and respond with a structured implementation plan:
+
+1. Break down the task into steps
+2. List files that need to be created or modified
+3. Describe the approach for each file
+4. Note any potential issues or edge cases
+
+Do NOT write code blocks. The user will switch to CODE mode to implement the plan."""

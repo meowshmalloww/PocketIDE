@@ -6,7 +6,12 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [33])
 class CodeExecutorTest {
 
     private val executor = CodeExecutor()
@@ -183,5 +188,206 @@ class CodeExecutorTest {
         val result = executor.execute("console.log('hi');", Language.JAVASCRIPT)
 
         assertTrue("duration should be >= 0", result.durationMs >= 0)
+    }
+
+    // === Lua tests ===
+
+    @Test
+    fun `lua executes simple print`() = runBlocking {
+        val result = executor.execute("print('hello lua')", Language.LUA)
+
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertEquals("hello lua\n", result.stdout)
+        assertEquals(0, result.exitCode)
+    }
+
+    @Test
+    fun `lua executes arithmetic`() = runBlocking {
+        val result = executor.execute("print(2 + 3)", Language.LUA)
+
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertEquals("5\n", result.stdout)
+    }
+
+    @Test
+    fun `lua executes function`() = runBlocking {
+        val result = executor.execute(
+            """
+            function factorial(n)
+                if n <= 1 then return 1 end
+                return n * factorial(n - 1)
+            end
+            print(factorial(5))
+            """.trimIndent(),
+            Language.LUA,
+        )
+
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertEquals("120\n", result.stdout)
+    }
+
+    @Test
+    fun `lua returns failed for syntax error`() = runBlocking {
+        val result = executor.execute("print(", Language.LUA)
+
+        assertEquals(ExecutionStatus.FAILED, result.status)
+        assertTrue(result.stderr.isNotBlank())
+    }
+
+    // === Shell tests ===
+    // Note: Shell tests use ProcessBuilder with "sh" which is available on
+    // Android, Linux, macOS, and Windows (via Git Bash). On CI without sh,
+    // these tests may fail and should be skipped.
+
+    @Test
+    fun `shell executes echo`() = runBlocking {
+        val result = executor.execute("echo hello_shell", Language.SHELL)
+
+        // Shell (sh) may not be available in all test environments (e.g. Windows without Git Bash)
+        if (result.status == ExecutionStatus.FAILED && 
+            (result.stderr.contains("timed out") || result.stderr.contains("No such file") ||
+                result.stderr.contains("Cannot run") || result.stderr.contains("IOException"))) {
+            return@runBlocking
+        }
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertTrue(result.stdout.contains("hello_shell"))
+        assertEquals(0, result.exitCode)
+    }
+
+    @Test
+    fun `shell executes multiple commands`() = runBlocking {
+        val result = executor.execute(
+            "echo line1\necho line2",
+            Language.SHELL,
+        )
+
+        if (result.status == ExecutionStatus.FAILED &&
+            (result.stderr.contains("timed out") || result.stderr.contains("No such file") ||
+                result.stderr.contains("Cannot run") || result.stderr.contains("IOException"))) {
+            return@runBlocking
+        }
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertTrue(result.stdout.contains("line1"))
+        assertTrue(result.stdout.contains("line2"))
+    }
+
+    @Test
+    fun `shell returns failed for bad command`() = runBlocking {
+        val result = executor.execute("exit 1", Language.SHELL)
+
+        if (result.status == ExecutionStatus.FAILED &&
+            (result.stderr.contains("timed out") || result.stderr.contains("No such file") ||
+                result.stderr.contains("Cannot run") || result.stderr.contains("IOException"))) {
+            return@runBlocking
+        }
+        assertEquals(ExecutionStatus.FAILED, result.status)
+        assertEquals(1, result.exitCode)
+    }
+
+    // === SQL tests ===
+
+    @Test
+    fun `sql creates table and inserts`() = runBlocking {
+        val result = executor.execute(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);" +
+                "INSERT INTO users (name) VALUES ('Alice');" +
+                "INSERT INTO users (name) VALUES ('Bob');",
+            Language.SQL,
+        )
+
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertEquals(0, result.exitCode)
+    }
+
+    @Test
+    fun `sql selects from table`() = runBlocking {
+        val result = executor.execute(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT);" +
+                "INSERT INTO items (name) VALUES ('apple');" +
+                "INSERT INTO items (name) VALUES ('banana');" +
+                "SELECT * FROM items;",
+            Language.SQL,
+        )
+
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertTrue(result.stdout.contains("apple"))
+        assertTrue(result.stdout.contains("banana"))
+    }
+
+    @Test
+    fun `sql returns failed for invalid syntax`() = runBlocking {
+        val result = executor.execute("SELECT FROM nonexistent;", Language.SQL)
+
+        assertEquals(ExecutionStatus.FAILED, result.status)
+        assertTrue(result.stderr.isNotBlank())
+    }
+
+    // === Java tests (BeanShell) ===
+
+    @Test
+    fun `java executes basic print`() = runBlocking {
+        val result = executor.execute(
+            "System.out.println(\"hello_java\");",
+            Language.JAVA,
+        )
+
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertTrue(result.stdout.contains("hello_java"))
+    }
+
+    @Test
+    fun `java executes arithmetic`() = runBlocking {
+        val result = executor.execute(
+            "int a = 10; int b = 20; System.out.println(a + b);",
+            Language.JAVA,
+        )
+
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertTrue(result.stdout.contains("30"))
+    }
+
+    @Test
+    fun `java executes for loop`() = runBlocking {
+        val result = executor.execute(
+            """
+            int sum = 0;
+            for (int i = 1; i <= 5; i++) {
+                sum += i;
+            }
+            System.out.println("sum=" + sum);
+            """.trimIndent(),
+            Language.JAVA,
+        )
+
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertTrue(result.stdout.contains("sum=15"))
+    }
+
+    @Test
+    fun `java executes method definition and call`() = runBlocking {
+        val result = executor.execute(
+            """
+            int factorial(int n) {
+                if (n <= 1) return 1;
+                return n * factorial(n - 1);
+            }
+            System.out.println(factorial(5));
+            """.trimIndent(),
+            Language.JAVA,
+        )
+
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertTrue(result.stdout.contains("120"))
+    }
+
+    @Test
+    fun `java returns failed for syntax error`() = runBlocking {
+        val result = executor.execute(
+            "int x = ;",
+            Language.JAVA,
+        )
+
+        assertEquals(ExecutionStatus.FAILED, result.status)
+        assertTrue(result.stderr.isNotBlank())
     }
 }

@@ -5,6 +5,10 @@ import androidx.core.content.edit
 
 private const val PREFS_NAME = "pocketide_prefs"
 private const val KEY_MODEL_PATH = "ai_model_path"
+private const val KEY_TOKENIZER_PATH = "ai_tokenizer_path"
+private const val KEY_TEMPERATURE = "ai_temperature"
+private const val KEY_MAX_SEQ_LEN = "ai_max_seq_len"
+private const val KEY_PROMPT_TEMPLATE = "ai_prompt_template"
 private const val KEY_QUANTIZATION = "ai_quantization"
 private const val KEY_POWER_SAVING = "ai_power_saving"
 private const val KEY_THERMAL_AWARE = "ai_thermal_aware"
@@ -19,6 +23,11 @@ class AiConfigRepository(context: Context) {
         val default = AiConfig()
         return AiConfig(
             modelPath = prefs.getString(KEY_MODEL_PATH, default.modelPath) ?: default.modelPath,
+            tokenizerPath = prefs.getString(KEY_TOKENIZER_PATH, default.tokenizerPath) ?: default.tokenizerPath,
+            temperature = prefs.getFloat(KEY_TEMPERATURE, default.temperature),
+            maxSeqLen = prefs.getInt(KEY_MAX_SEQ_LEN, default.maxSeqLen),
+            promptTemplate = prefs.getString(KEY_PROMPT_TEMPLATE, default.promptTemplate.name)
+                ?.let { runCatching { PromptTemplate.valueOf(it) }.getOrNull() } ?: default.promptTemplate,
             quantization = prefs.getString(KEY_QUANTIZATION, default.quantization.name)
                 ?.let { runCatching { Quantization.valueOf(it) }.getOrNull() } ?: default.quantization,
             powerSaving = prefs.getBoolean(KEY_POWER_SAVING, default.powerSaving),
@@ -31,6 +40,10 @@ class AiConfigRepository(context: Context) {
     fun save(config: AiConfig) {
         prefs.edit {
             putString(KEY_MODEL_PATH, config.modelPath)
+            putString(KEY_TOKENIZER_PATH, config.tokenizerPath)
+            putFloat(KEY_TEMPERATURE, config.temperature)
+            putInt(KEY_MAX_SEQ_LEN, config.maxSeqLen)
+            putString(KEY_PROMPT_TEMPLATE, config.promptTemplate.name)
             putString(KEY_QUANTIZATION, config.quantization.name)
             putBoolean(KEY_POWER_SAVING, config.powerSaving)
             putBoolean(KEY_THERMAL_AWARE, config.thermalAware)

@@ -16,6 +16,10 @@ desugarJdkLibs = "2.1.5"
 rhino = "1.7.15"
 kotlinxCoroutines = "1.8.1"
 robolectric = "4.13"
+executorch = "1.0.0"
+luaj = "3.0.1"
+beanshell = "2.0b5"
+llamacppKotlin = "0.4.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -42,6 +46,10 @@ sora-language-treesitter = { group = "io.github.rosemoe", name = "language-trees
 sora-language-java = { group = "io.github.rosemoe", name = "language-java" }
 desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugarJdkLibs" }
 rhino = { group = "org.mozilla", name = "rhino", version.ref = "rhino" }
+executorch-android = { group = "org.pytorch", name = "executorch-android", version.ref = "executorch" }
+luaj-jse = { group = "org.luaj", name = "luaj-jse", version.ref = "luaj" }
+beanshell = { group = "org.beanshell", name = "bsh", version.ref = "beanshell" }
+llamacpp-kotlin = { group = "io.github.ljcamargo", name = "llamacpp-kotlin", version.ref = "llamacppKotlin" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "kotlinxCoroutines" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 

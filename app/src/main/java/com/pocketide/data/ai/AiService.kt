@@ -1,39 +1,75 @@
 package com.pocketide.data.ai
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-
 sealed class AiResult {
-    data class Success(val content: String) : AiResult()
+    data class Success(val content: String, val statsJson: String? = null) : AiResult()
     data class Error(val message: String) : AiResult()
 }
 
 data class ChatTurn(val role: String, val content: String)
 
 /**
- * On-device AI inference service. Uses ExecuTorch for local model execution.
+ * On-device AI inference service. Routes to the appropriate [LlmRunner]
+ * based on the model file extension:
+ * - `.pte` → [ExecutorchLlmRunner] (ExecuTorch, NPU acceleration on Snapdragon)
+ * - `.gguf` → [LlamaCppRunner] (llama.cpp, broad model ecosystem from HuggingFace)
+ *
  * No network calls — fully offline.
+ *
+ * The runner instances are owned by the caller (typically a ViewModel scoped
+ * to the process) so that model weights are loaded once and reused.
  */
-class AiService(private val config: AiConfig) {
+class AiService(
+    private val executorchRunner: ExecutorchLlmRunner,
+    private val llamaCppRunner: LlamaCppRunner,
+    private val config: AiConfig,
+) {
 
-    @Suppress("UNUSED_PARAMETER")
     suspend fun chatCompletion(
         systemPrompt: String,
         history: List<ChatTurn>,
         userMessage: String,
-    ): AiResult = withContext(Dispatchers.Default) {
+        onToken: ((String) -> Unit)? = null,
+    ): AiResult {
         if (!config.isConfigured) {
-            return@withContext AiResult.Error(
-                "No local model configured. Add a .pte model file in Settings to enable on-device AI.",
+            return AiResult.Error(
+                "No on-device model configured. Add a .pte or .gguf model file " +
+                    "in Settings to enable AI.",
             )
         }
 
-        // TODO: ExecuTorch integration — load .pte model, run inference, stream tokens.
-        // For now, return an error indicating the model is configured but inference
-        // is not yet wired up.
-        AiResult.Error(
-            "Local model found at ${config.modelPath} but on-device inference is not yet implemented. " +
-                "ExecuTorch integration pending.",
+        val runner: LlmRunner = when (config.modelFormat) {
+            ModelFormat.PTE -> executorchRunner
+            ModelFormat.GGUF -> llamaCppRunner
+            ModelFormat.UNKNOWN -> return AiResult.Error(
+                "Unsupported model format. Use .pte or .gguf files.",
+            )
+        }
+
+        when (val load = runner.ensureLoaded(
+            modelPath = config.modelPath,
+            tokenizerPath = config.tokenizerPath,
+            temperature = config.temperature,
+        )) {
+            is LlmRunner.LoadResult.Success -> Unit
+            is LlmRunner.LoadResult.Error -> return AiResult.Error(load.message)
+        }
+
+        val prompt = PromptFormatter.format(
+            template = config.promptTemplate,
+            systemPrompt = systemPrompt,
+            history = history,
+            userMessage = userMessage,
         )
+
+        val sink = LlmRunner.TokenSink { token ->
+            onToken?.invoke(token)
+        }
+
+        return when (val gen = runner.generate(prompt, config.maxSeqLen, sink)) {
+            is LlmRunner.GenerateResult.Success ->
+                AiResult.Success(content = gen.text, statsJson = gen.statsJson)
+            is LlmRunner.GenerateResult.Error ->
+                AiResult.Error(gen.message)
+        }
     }
 }

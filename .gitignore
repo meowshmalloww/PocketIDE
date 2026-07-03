@@ -18,3 +18,7 @@ docs/
 .devin/
 .windsurf/
 .windsurfrules
+
+# Local AI model files (.pte, .gguf) — too large for git
+models/*
+!models/.gitkeep

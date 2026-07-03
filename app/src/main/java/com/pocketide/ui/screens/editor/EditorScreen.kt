@@ -4,7 +4,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -17,9 +19,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -121,8 +128,8 @@ private fun LandscapeLayout(
         ) {
             ActivityBar(
                 activeTab = state.activeTab,
-                isExplorerOpen = true,
-                isTerminalOpen = state.terminalExpanded,
+                isExplorerOpen = state.activeTab != ActivityTab.AI_CHAT && state.activeTab != ActivityTab.EXTENSIONS,
+                isTerminalOpen = state.terminalExpanded && state.activeTab != ActivityTab.AI_CHAT && state.activeTab != ActivityTab.EXTENSIONS,
                 onTabSelected = { tab ->
                     if (tab == ActivityTab.SETTINGS) {
                         onNavigateToSettings()
@@ -133,6 +140,37 @@ private fun LandscapeLayout(
             )
             Spacer(modifier = Modifier.weight(1f))
             Spacer(modifier = Modifier.navigationBarsPadding())
+        }
+
+        // Full-page AI or Extensions panel (no explorer, no terminal, no toggle arrow)
+        if (state.activeTab == ActivityTab.AI_CHAT || state.activeTab == ActivityTab.EXTENSIONS) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .statusBarsPadding()
+                    .background(MaterialTheme.colorScheme.surface),
+            ) {
+                if (state.activeTab == ActivityTab.AI_CHAT) {
+                    AiChatPanel(
+                        messages = state.messages,
+                        inputText = state.inputText,
+                        onInputChange = viewModel::onInputChange,
+                        onSend = viewModel::sendMessage,
+                        isGenerating = state.isGenerating,
+                        onNewChat = viewModel::newChat,
+                        aiMode = state.aiMode,
+                        onAiModeChange = viewModel::setAiMode,
+                        modelMode = state.modelMode,
+                        onModelModeChange = viewModel::setModelMode,
+                    )
+                } else {
+                    ExtensionsPanel(
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
+            return
         }
 
         // Explorer panel (draggable width)
@@ -157,22 +195,25 @@ private fun LandscapeLayout(
             },
         )
 
-        // Center: editor + terminal + AI overlay
-        Box(
+        // Center: editor + terminal + AI overlay (side by side, not overlay)
+        Row(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
                 .statusBarsPadding(),
         ) {
+            // Editor + terminal column (shrinks when AI overlay is open)
             Column(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .weight(1f, fill = !state.showAiOverlay)
+                    .fillMaxHeight(),
             ) {
                 LandscapeEditorArea(state = state, viewModel = viewModel)
 
                 // Horizontal drag handle for terminal
                 HorizontalDragHandle(
                     onDragDelta = { delta ->
-                        terminalHeight = (terminalHeight + delta / density.density).coerceIn(60f, 500f)
+                        terminalHeight = (terminalHeight - delta / density.density).coerceIn(60f, 500f)
                     },
                 )
 
@@ -188,7 +229,7 @@ private fun LandscapeLayout(
                 )
             }
 
-            // AI Chat panel (right, as overlay, draggable width, roundified)
+            // AI slide-out panel (right side, toggled by arrow button)
             AiChatOverlay(
                 state = state,
                 viewModel = viewModel,
@@ -196,7 +237,12 @@ private fun LandscapeLayout(
                 onWidthDrag = { delta ->
                     aiWidth = (aiWidth - delta / density.density).coerceIn(300f, 1400f)
                 },
-                modifier = Modifier.align(Alignment.CenterEnd),
+            )
+
+            // Toggle arrow button for AI overlay (right edge)
+            AiOverlayToggleButton(
+                isOverlayOpen = state.showAiOverlay,
+                onClick = viewModel::toggleAiOverlay,
             )
         }
     }
@@ -241,24 +287,24 @@ private fun ColumnScope.LandscapeEditorArea(
     state: EditorUiState,
     viewModel: EditorViewModel,
 ) {
-    // File tabs + save action bar (always visible — AI tab + file tabs)
+    // File tabs — only show when on code editor view
     val activeFile = state.files.getOrNull(state.activeFileIndex)
     val hasUnsaved = activeFile?.isModified == true
-    TopTabBar(
-        files = state.files,
-        activeFileIndex = state.activeFileIndex,
-        isAiTabActive = state.isAiTabActive,
-        onAiTabSelected = { viewModel.setAiTabActive(true) },
-        onFileTabSelected = { index ->
-            viewModel.setAiTabActive(false)
-            viewModel.selectFile(index)
-        },
-        onFileTabClosed = viewModel::closeFile,
-        hasUnsavedChanges = hasUnsaved,
-        onSave = viewModel::saveActiveFile,
-    )
+    if (state.activeTab != ActivityTab.AI_CHAT && state.activeTab != ActivityTab.EXTENSIONS) {
+        TopTabBar(
+            files = state.files,
+            activeFileIndex = state.activeFileIndex,
+            onFileTabSelected = { index ->
+                viewModel.setAiTabActive(false)
+                viewModel.selectFile(index)
+            },
+            onFileTabClosed = viewModel::closeFile,
+            hasUnsavedChanges = hasUnsaved,
+            onSave = viewModel::saveActiveFile,
+        )
+    }
 
-    // Code editor area
+    // Code editor area or AI page
     Box(
         modifier = Modifier
             .weight(1f)
@@ -266,7 +312,20 @@ private fun ColumnScope.LandscapeEditorArea(
             .background(MaterialTheme.colorScheme.background)
             .padding(8.dp),
     ) {
-        if (state.files.isEmpty()) {
+        if (state.activeTab == ActivityTab.AI_CHAT) {
+            AiChatPanel(
+                messages = state.messages,
+                inputText = state.inputText,
+                onInputChange = viewModel::onInputChange,
+                onSend = viewModel::sendMessage,
+                isGenerating = state.isGenerating,
+                onNewChat = viewModel::newChat,
+                aiMode = state.aiMode,
+                onAiModeChange = viewModel::setAiMode,
+                modelMode = state.modelMode,
+                onModelModeChange = viewModel::setModelMode,
+            )
+        } else if (state.files.isEmpty()) {
             Text(
                 text = "// No file open\n// Use the Explorer to create a file\n// or ask AI to generate code",
                 style = MaterialTheme.typography.bodySmall.copy(
@@ -293,6 +352,33 @@ private fun ColumnScope.LandscapeEditorArea(
 }
 
 @Composable
+private fun AiOverlayToggleButton(
+    isOverlayOpen: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .width(18.dp)
+            .fillMaxHeight()
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (isOverlayOpen) {
+                Icons.Filled.ChevronRight
+            } else {
+                Icons.Filled.ChevronLeft
+            },
+            contentDescription = if (isOverlayOpen) "Close AI panel" else "Open AI panel",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(14.dp),
+        )
+    }
+}
+
+@Composable
 private fun AiChatOverlay(
     state: EditorUiState,
     viewModel: EditorViewModel,
@@ -301,7 +387,7 @@ private fun AiChatOverlay(
     modifier: Modifier = Modifier,
 ) {
     AnimatedVisibility(
-        visible = state.activeTab == ActivityTab.AI_CHAT,
+        visible = state.showAiOverlay,
         enter = slideInHorizontally(initialOffsetX = { it }),
         exit = slideOutHorizontally(targetOffsetX = { it }),
         modifier = modifier,
@@ -334,6 +420,11 @@ private fun AiChatOverlay(
                     onInputChange = viewModel::onInputChange,
                     onSend = viewModel::sendMessage,
                     isGenerating = state.isGenerating,
+                    onNewChat = viewModel::newChat,
+                    aiMode = state.aiMode,
+                    onAiModeChange = viewModel::setAiMode,
+                    modelMode = state.modelMode,
+                    onModelModeChange = viewModel::setModelMode,
                 )
             }
         }
@@ -396,22 +487,22 @@ private fun PortraitLayout(
                     .weight(1f)
                     .fillMaxHeight(),
             ) {
-                // Tab bar — always at top (like IDE)
+                // Tab bar — only show when on code editor view
                 val activeFile = state.files.getOrNull(state.activeFileIndex)
                 val hasUnsaved = activeFile?.isModified == true
-                TopTabBar(
-                    files = state.files,
-                    activeFileIndex = state.activeFileIndex,
-                    isAiTabActive = state.isAiTabActive,
-                    onAiTabSelected = { viewModel.setAiTabActive(true) },
-                    onFileTabSelected = { index ->
-                        viewModel.setAiTabActive(false)
-                        viewModel.selectFile(index)
-                    },
-                    onFileTabClosed = viewModel::closeFile,
-                    hasUnsavedChanges = hasUnsaved,
-                    onSave = viewModel::saveActiveFile,
-                )
+                if (!state.isAiTabActive && state.activeTab != ActivityTab.EXTENSIONS) {
+                    TopTabBar(
+                        files = state.files,
+                        activeFileIndex = state.activeFileIndex,
+                        onFileTabSelected = { index ->
+                            viewModel.setAiTabActive(false)
+                            viewModel.selectFile(index)
+                        },
+                        onFileTabClosed = viewModel::closeFile,
+                        hasUnsavedChanges = hasUnsaved,
+                        onSave = viewModel::saveActiveFile,
+                    )
+                }
 
                 // Content area
                 if (state.isAiTabActive) {
@@ -427,6 +518,11 @@ private fun PortraitLayout(
                             onInputChange = viewModel::onInputChange,
                             onSend = viewModel::sendMessage,
                             isGenerating = state.isGenerating,
+                            onNewChat = viewModel::newChat,
+                            aiMode = state.aiMode,
+                            onAiModeChange = viewModel::setAiMode,
+                            modelMode = state.modelMode,
+                            onModelModeChange = viewModel::setModelMode,
                         )
                     }
                 } else if (state.activeTab == ActivityTab.EXTENSIONS) {
@@ -473,7 +569,7 @@ private fun PortraitLayout(
                     if (state.terminalExpanded) {
                         HorizontalDragHandle(
                             onDragDelta = { delta ->
-                                terminalHeight = (terminalHeight + delta / density.density).coerceIn(60f, 500f)
+                                terminalHeight = (terminalHeight - delta / density.density).coerceIn(60f, 500f)
                             },
                         )
                     }

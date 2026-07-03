@@ -35,14 +35,14 @@ private data class LanguageSupport(
 
 private val SUPPORTED_LANGUAGES = listOf(
     LanguageSupport(Language.JAVASCRIPT, canExecute = true),
+    LanguageSupport(Language.LUA, canExecute = true),
+    LanguageSupport(Language.SHELL, canExecute = true),
+    LanguageSupport(Language.SQL, canExecute = true),
     LanguageSupport(Language.PYTHON, canExecute = false),
     LanguageSupport(Language.TYPESCRIPT, canExecute = false),
     LanguageSupport(Language.KOTLIN, canExecute = false),
     LanguageSupport(Language.DART, canExecute = false),
-    LanguageSupport(Language.JAVA, canExecute = false),
-    LanguageSupport(Language.LUA, canExecute = false),
-    LanguageSupport(Language.SHELL, canExecute = false),
-    LanguageSupport(Language.SQL, canExecute = false),
+    LanguageSupport(Language.JAVA, canExecute = true),
     LanguageSupport(Language.HTML, canExecute = false),
     LanguageSupport(Language.CSS, canExecute = false),
     LanguageSupport(Language.YAML, canExecute = false),

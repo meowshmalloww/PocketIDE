@@ -15,7 +15,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Icon
@@ -28,40 +27,39 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pocketide.data.model.CodeFile
+import com.pocketide.data.model.Language
 
 @Composable
 fun TopTabBar(
     files: List<CodeFile>,
     activeFileIndex: Int,
-    isAiTabActive: Boolean,
-    onAiTabSelected: () -> Unit,
     onFileTabSelected: (Int) -> Unit,
     onFileTabClosed: (Int) -> Unit,
     hasUnsavedChanges: Boolean,
     onSave: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .height(36.dp)
+            .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surface),
     ) {
-        // AI tab — always first, locked
-        AiTab(
-            isActive = isAiTabActive,
-            onClick = onAiTabSelected,
-        )
-
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(36.dp),
+        ) {
         // File tabs
         LazyRow(
             modifier = Modifier.weight(1f),
         ) {
             itemsIndexed(files) { index, file ->
-                val isActive = !isAiTabActive && index == activeFileIndex
+                val isActive = index == activeFileIndex
                 FileTab(
                     file = file,
                     isActive = isActive,
@@ -73,7 +71,7 @@ fun TopTabBar(
         }
 
         // Save button
-        if (!isAiTabActive && hasUnsavedChanges) {
+        if (hasUnsavedChanges) {
             IconButton(
                 onClick = onSave,
                 modifier = Modifier.size(36.dp),
@@ -86,48 +84,8 @@ fun TopTabBar(
                 )
             }
         }
-    }
-}
+        }
 
-@Composable
-private fun AiTab(
-    isActive: Boolean,
-    onClick: () -> Unit,
-) {
-    val iconTint = if (isActive) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    val pillColor = if (isActive) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-    } else {
-        Color.Transparent
-    }
-
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = Modifier
-            .height(28.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(pillColor)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp),
-    ) {
-        Icon(
-            imageVector = Icons.Filled.AutoAwesome,
-            contentDescription = "AI Chat",
-            tint = iconTint,
-            modifier = Modifier.size(16.dp),
-        )
-        Text(
-            text = "AI",
-            style = MaterialTheme.typography.labelMedium.copy(
-                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-            ),
-            color = iconTint,
-        )
     }
 }
 
@@ -158,11 +116,18 @@ private fun FileTab(
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 12.dp),
+                .padding(horizontal = 10.dp),
         ) {
+            // Language color dot
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(languageColor(file.language)),
+            )
             Text(
                 text = file.name,
                 style = MaterialTheme.typography.labelSmall.copy(
@@ -170,22 +135,22 @@ private fun FileTab(
                 ),
                 color = textColor,
                 maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
+                overflow = TextOverflow.Ellipsis,
             )
             if (file.isModified) {
                 Box(
                     modifier = Modifier
-                        .size(6.dp)
-                        .clip(RoundedCornerShape(3.dp))
+                        .size(5.dp)
+                        .clip(RoundedCornerShape(2.5.dp))
                         .background(MaterialTheme.colorScheme.primary),
                 )
             }
+            // Close button — always show if canClose, else show a subtle dot
             if (canClose) {
                 Box(
                     modifier = Modifier
-                        .size(28.dp)
-                        .clip(RoundedCornerShape(14.dp))
+                        .size(24.dp)
+                        .clip(RoundedCornerShape(12.dp))
                         .clickable { onClose() },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -193,7 +158,7 @@ private fun FileTab(
                         imageVector = Icons.Filled.Close,
                         contentDescription = "Close ${file.name}",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(16.dp),
+                        modifier = Modifier.size(14.dp),
                     )
                 }
             }
@@ -206,4 +171,21 @@ private fun FileTab(
                 .background(borderColor),
         )
     }
+}
+
+private fun languageColor(language: Language): Color = when (language) {
+    Language.PYTHON -> Color(0xFF4584B6)
+    Language.JAVASCRIPT -> Color(0xFFF7DF1E)
+    Language.TYPESCRIPT -> Color(0xFF3178C6)
+    Language.KOTLIN -> Color(0xFF7F52FF)
+    Language.DART -> Color(0xFF0175C2)
+    Language.SQL -> Color(0xFFE38900)
+    Language.HTML -> Color(0xFFE34F26)
+    Language.CSS -> Color(0xFF1572B6)
+    Language.JAVA -> Color(0xFFED8B00)
+    Language.LUA -> Color(0xFF2C2D72)
+    Language.SHELL -> Color(0xFF4EAA25)
+    Language.YAML -> Color(0xFFCB171E)
+    Language.MARKDOWN -> Color(0xFF6C7A89)
+    Language.JSON -> Color(0xFFA0A500)
 }
