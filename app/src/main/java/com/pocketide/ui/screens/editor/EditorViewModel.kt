@@ -56,6 +56,8 @@ data class EditorUiState(
     val showAiOverlay: Boolean = false,
     val aiMode: AiMode = AiMode.CODE,
     val modelMode: ModelMode = ModelMode.SINGLE,
+    val isThinking: Boolean = false,
+    val lastTokensPerSecond: Float? = null,
 )
 
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
@@ -232,6 +234,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 messages = emptyList(),
                 inputText = "",
                 isGenerating = false,
+                isThinking = false,
+                lastTokensPerSecond = null,
                 architectStatus = AgentStatus.IDLE,
                 coderStatus = AgentStatus.IDLE,
                 validatorStatus = AgentStatus.IDLE,
@@ -258,6 +262,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 messages = it.messages + ChatMessage(role = MessageRole.USER, content = prompt),
                 inputText = "",
                 isGenerating = true,
+                isThinking = true,
                 architectStatus = AgentStatus.LOADING,
                 coderStatus = AgentStatus.IDLE,
                 activeTab = ActivityTab.AI_CHAT,
@@ -272,11 +277,25 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 AiMode.ASK -> ASK_MODE_PROMPT
                 AiMode.PLAN -> PLAN_MODE_PROMPT
             }
+
+            val startTime = System.currentTimeMillis()
+            var tokenCount = 0
+            val tokenInterval = System.currentTimeMillis()
+
             val result = service.chatCompletion(
                 systemPrompt = systemPrompt,
                 history = historyForRequest,
                 userMessage = prompt,
+                onToken = { _ ->
+                    if (_state.value.isThinking) {
+                        _state.update { it.copy(isThinking = false) }
+                    }
+                    tokenCount++
+                },
             )
+
+            val elapsedSec = (System.currentTimeMillis() - startTime) / 1000f
+            val tps = if (elapsedSec > 0f) tokenCount / elapsedSec else null
 
             when (result) {
                 is AiResult.Error -> _state.update {
@@ -288,21 +307,25 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         ),
                         architectStatus = AgentStatus.ERROR,
                         isGenerating = false,
+                        isThinking = false,
                     )
                 }
 
                 is AiResult.Success -> {
                     when (currentMode) {
-                        AiMode.CODE -> applyAiResponse(result.content)
+                        AiMode.CODE -> applyAiResponse(result.content, tps)
                         AiMode.ASK -> _state.update {
                             it.copy(
                                 messages = it.messages + ChatMessage(
                                     role = MessageRole.ASSISTANT,
                                     content = result.content,
                                     agentStatus = AgentStatus.DONE,
+                                    tokensPerSecond = tps,
                                 ),
                                 architectStatus = AgentStatus.DONE,
                                 isGenerating = false,
+                                isThinking = false,
+                                lastTokensPerSecond = tps,
                             )
                         }
                         AiMode.PLAN -> _state.update {
@@ -311,9 +334,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                                     role = MessageRole.ARCHITECT,
                                     content = result.content,
                                     agentStatus = AgentStatus.DONE,
+                                    tokensPerSecond = tps,
                                 ),
                                 architectStatus = AgentStatus.DONE,
                                 isGenerating = false,
+                                isThinking = false,
+                                lastTokensPerSecond = tps,
                             )
                         }
                     }
@@ -322,7 +348,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun applyAiResponse(rawContent: String) {
+    private fun applyAiResponse(rawContent: String, tokensPerSecond: Float? = null) {
         val parsed = parseAiResponse(rawContent)
 
         _state.update {
@@ -331,9 +357,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     role = MessageRole.ARCHITECT,
                     content = parsed.plan ?: rawContent,
                     agentStatus = AgentStatus.DONE,
+                    tokensPerSecond = tokensPerSecond,
                 ),
                 architectStatus = AgentStatus.DONE,
                 coderStatus = if (parsed.code != null) AgentStatus.GENERATING else AgentStatus.IDLE,
+                isThinking = false,
             )
         }
 
@@ -363,12 +391,15 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     role = MessageRole.CODER,
                     content = "Generated $filename:\n```${language.fileExtension}\n$code\n```",
                     agentStatus = AgentStatus.DONE,
+                    tokensPerSecond = tokensPerSecond,
                 ),
                 coderStatus = AgentStatus.DONE,
                 files = newFiles,
                 activeFileIndex = targetIndex,
                 activeFileContent = code,
                 isGenerating = false,
+                isThinking = false,
+                lastTokensPerSecond = tokensPerSecond,
                 unsavedCount = newFiles.count { f -> f.isModified },
             )
         }
@@ -390,6 +421,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun closeFile(index: Int) {
         _state.update {
+            if (index !in it.files.indices) return@update it
             val newFiles = it.files.toMutableList()
             newFiles.removeAt(index)
             val newIndex = if (index <= it.activeFileIndex) {
@@ -406,7 +438,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun createNewFile(name: String? = null, language: Language? = null) {
+    fun createNewFile(name: String? = null, language: Language? = null, content: String = "") {
         val currentFiles = _state.value.files
         val resolvedName = name ?: "untitled${currentFiles.size + 1}.${language?.fileExtension ?: "py"}"
         val resolvedLang = language ?: Language.fromExtension(resolvedName.substringAfterLast('.', "")) ?: Language.PYTHON
@@ -414,12 +446,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val newFile = CodeFile(
             name = resolvedName,
             language = resolvedLang,
+            content = content,
         )
         _state.update {
             it.copy(
                 files = it.files + newFile,
                 activeFileIndex = it.files.size,
-                activeFileContent = "",
+                activeFileContent = content,
             )
         }
         val projectName = _state.value.projectName
@@ -465,6 +498,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             repository.deleteFile(s.projectName, file.name)
             _state.update {
+                if (index !in it.files.indices) return@update it
                 val newFiles = it.files.toMutableList()
                 newFiles.removeAt(index)
                 val newIndex = if (index <= it.activeFileIndex) {
@@ -595,8 +629,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 }
 
-private const val CODE_MODE_PROMPT = """You are the coding assistant inside PocketIDE, an on-device Android IDE.
-When the user asks you to write or modify code, respond in exactly this format:
+private const val CODE_MODE_PROMPT = """You are the coding assistant inside PocketIDE, an on-device Android IDE that runs code directly on the phone.
+
+When the user asks you to write or modify code, respond in EXACTLY this format:
 
 PLAN: <one-sentence description of what you will do>
 FILENAME: <filename with extension, e.g. main.py>
@@ -604,7 +639,46 @@ FILENAME: <filename with extension, e.g. main.py>
 <the full file content>
 ```
 
-Only include one code block. Keep the plan to a single line. Do not add extra commentary outside this format."""
+Only include ONE code block. Keep the plan to a single line. Do not add commentary outside this format.
+
+SUPPORTED LANGUAGES (pick the best fit): python, javascript, typescript, lua, sql, java, shell.
+
+HARDWARE BRIDGE — available in javascript, lua, java via a global `hardware` object:
+  hardware.toast(msg)             show a short toast
+  hardware.toastLong(msg)         show a long toast
+  hardware.vibrate(ms)            vibrate for N milliseconds (default 200)
+  hardware.setFlashlight(bool)    turn torch on/off, returns true on success
+  hardware.batteryLevel()         battery percent 0..100, or -1
+  hardware.isCharging()           true if charging
+  hardware.clipboardGet()         read clipboard text
+  hardware.clipboardSet(text)     write clipboard
+  hardware.screenInfo()           "WxH, density"
+  hardware.networkType()          "wifi" | "cellular" | "ethernet" | "none"
+  hardware.isOnline()             boolean
+  hardware.storageFree()          free bytes
+  hardware.storageTotal()         total bytes
+  hardware.readSensor(type, ms)   type: accelerometer|gyroscope|light|pressure|proximity|magnetic
+  hardware.getDeviceInfo()        multi-line device summary
+  hardware.openUrl(url)           opens in the default browser
+
+Use `hardware` freely when the user asks for anything device-related (flashlight, vibrate, battery, sensors, etc.).
+
+JAVASCRIPT / TYPESCRIPT RULES — the runtime is Mozilla Rhino (ES5 only). ALWAYS:
+- Use var (never let/const)
+- Use function expressions (never arrow =>)
+- Use string concatenation with + (never backtick template literals)
+- Use index-based for loops (never for...of, for...in on arrays)
+- Avoid destructuring, spread, default parameters, classes, async/await, Promise, fetch
+- Output via console.log(...)
+
+PYTHON RULES — transpiled to JS. Use simple Python 3:
+- print(x), for x in range(n), if/elif/else, while, def, return
+- Basic strings, lists, dicts, arithmetic. Avoid f-strings, comprehensions, decorators, imports.
+
+LUA — full Lua 5.2 standard library. Use print(...) for output.
+SQL — standard SQLite. Use CREATE TABLE, INSERT, SELECT.
+SHELL — POSIX sh, echo for output.
+JAVA — BeanShell scripting (no class boilerplate needed). Use System.out.println(...)."""
 
 private const val ASK_MODE_PROMPT = """You are a knowledgeable assistant inside PocketIDE, an on-device Android IDE.
 The user is in ASK mode — they want explanations, not file modifications.

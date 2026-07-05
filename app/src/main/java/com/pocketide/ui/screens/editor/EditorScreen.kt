@@ -163,6 +163,7 @@ private fun LandscapeLayout(
                         onAiModeChange = viewModel::setAiMode,
                         modelMode = state.modelMode,
                         onModelModeChange = viewModel::setModelMode,
+                        isThinking = state.isThinking,
                     )
                 } else {
                     ExtensionsPanel(
@@ -324,6 +325,7 @@ private fun ColumnScope.LandscapeEditorArea(
                 onAiModeChange = viewModel::setAiMode,
                 modelMode = state.modelMode,
                 onModelModeChange = viewModel::setModelMode,
+                isThinking = state.isThinking,
             )
         } else if (state.files.isEmpty()) {
             Text(
@@ -425,6 +427,7 @@ private fun AiChatOverlay(
                     onAiModeChange = viewModel::setAiMode,
                     modelMode = state.modelMode,
                     onModelModeChange = viewModel::setModelMode,
+                    isThinking = state.isThinking,
                 )
             }
         }
@@ -523,6 +526,7 @@ private fun PortraitLayout(
                             onAiModeChange = viewModel::setAiMode,
                             modelMode = state.modelMode,
                             onModelModeChange = viewModel::setModelMode,
+                            isThinking = state.isThinking,
                         )
                     }
                 } else if (state.activeTab == ActivityTab.EXTENSIONS) {

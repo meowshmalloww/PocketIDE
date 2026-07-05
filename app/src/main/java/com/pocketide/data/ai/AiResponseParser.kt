@@ -9,35 +9,61 @@ data class ParsedAiResponse(
     val filename: String?,
 )
 
-private val PLAN_REGEX = Regex("""(?m)^PLAN:\s*(.+)$""")
-private val FILENAME_REGEX = Regex("""(?m)^FILENAME:\s*(\S+)$""")
-private val CODE_BLOCK_REGEX = Regex("""```([A-Za-z0-9+#]*)\n([\s\S]*?)```""")
+private val PLAN_REGEX = Regex("""(?im)^\s*PLAN\s*[:\-]\s*(.+)$""")
+private val FILENAME_REGEX = Regex("""(?im)^\s*FILENAME\s*[:\-]\s*[`"']?([^`"'\s]+)[`"']?\s*$""")
+private val CODE_BLOCK_REGEX = Regex("""```([A-Za-z0-9+#]*)\s*\n([\s\S]*?)```""")
+// Fallback: matches an unterminated code fence (AI stopped mid-generation).
+private val UNCLOSED_CODE_BLOCK_REGEX = Regex("""```([A-Za-z0-9+#]*)\s*\n([\s\S]*)$""")
 
+/**
+ * Parses a raw AI response into structured fields. Tolerates:
+ *  - Case-insensitive PLAN / FILENAME headers
+ *  - PLAN/FILENAME separated by `:` or `-`
+ *  - Filenames wrapped in quotes or backticks
+ *  - Missing language tag on code fence
+ *  - Unterminated code fence (AI hit token limit mid-block)
+ *  - No fenced block at all — falls back to raw content if a filename was given
+ */
 fun parseAiResponse(rawContent: String): ParsedAiResponse {
-    val plan = PLAN_REGEX.find(rawContent)?.groupValues?.get(1)?.trim()
+    val plan = PLAN_REGEX.find(rawContent)?.groupValues?.get(1)?.trim()?.trim('`', '"', '\'')
     val filename = FILENAME_REGEX.find(rawContent)?.groupValues?.get(1)?.trim()
 
-    val codeMatch = CODE_BLOCK_REGEX.find(rawContent)
-    val codeLangTag = codeMatch?.groupValues?.get(1)?.trim()?.lowercase()
-    val code = codeMatch?.groupValues?.get(2)?.trimEnd()
-
-    val language = when (codeLangTag) {
-        "python", "py" -> Language.PYTHON
-        "javascript", "js" -> Language.JAVASCRIPT
-        "typescript", "ts" -> Language.TYPESCRIPT
-        "kotlin", "kt" -> Language.KOTLIN
-        "dart" -> Language.DART
-        "java" -> Language.JAVA
-        "sql" -> Language.SQL
-        "shell", "sh", "bash" -> Language.SHELL
-        "yaml", "yml" -> Language.YAML
-        "css" -> Language.CSS
-        "lua" -> Language.LUA
-        "html" -> Language.HTML
-        "markdown", "md" -> Language.MARKDOWN
-        "json" -> Language.JSON
-        else -> filename?.substringAfterLast('.', "")?.let { Language.fromExtension(it) }
+    // Try closed fence first, then unclosed fallback.
+    val closedMatch = CODE_BLOCK_REGEX.find(rawContent)
+    val (codeLangTag, code) = when {
+        closedMatch != null -> {
+            closedMatch.groupValues[1].trim().lowercase() to closedMatch.groupValues[2].trimEnd()
+        }
+        else -> {
+            val open = UNCLOSED_CODE_BLOCK_REGEX.find(rawContent)
+            if (open != null) {
+                open.groupValues[1].trim().lowercase() to open.groupValues[2].trimEnd()
+            } else {
+                "" to null
+            }
+        }
     }
 
+    val language = languageFromTag(codeLangTag)
+        ?: filename?.substringAfterLast('.', "")?.let { Language.fromExtension(it) }
+
     return ParsedAiResponse(plan = plan, code = code, language = language, filename = filename)
+}
+
+private fun languageFromTag(tag: String): Language? = when (tag) {
+    "python", "py", "python3" -> Language.PYTHON
+    "javascript", "js", "node", "nodejs" -> Language.JAVASCRIPT
+    "typescript", "ts" -> Language.TYPESCRIPT
+    "kotlin", "kt", "kts" -> Language.KOTLIN
+    "dart" -> Language.DART
+    "java" -> Language.JAVA
+    "sql", "sqlite" -> Language.SQL
+    "shell", "sh", "bash", "zsh" -> Language.SHELL
+    "yaml", "yml" -> Language.YAML
+    "css" -> Language.CSS
+    "lua" -> Language.LUA
+    "html", "htm" -> Language.HTML
+    "markdown", "md" -> Language.MARKDOWN
+    "json" -> Language.JSON
+    else -> null
 }

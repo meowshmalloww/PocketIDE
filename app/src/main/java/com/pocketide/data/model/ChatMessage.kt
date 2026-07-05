@@ -15,4 +15,6 @@ data class ChatMessage(
     val content: String,
     val timestamp: Long = System.currentTimeMillis(),
     val agentStatus: AgentStatus? = null,
+    val tokensPerSecond: Float? = null,
+    val isThinking: Boolean = false,
 )

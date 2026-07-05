@@ -1,5 +1,11 @@
 package com.pocketide.ui.components
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -11,13 +17,15 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -37,11 +45,12 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -64,6 +73,7 @@ fun AiChatPanel(
     onAiModeChange: (AiMode) -> Unit = {},
     modelMode: ModelMode = ModelMode.SINGLE,
     onModelModeChange: (ModelMode) -> Unit = {},
+    isThinking: Boolean = false,
 ) {
     Column(
         modifier = modifier
@@ -144,7 +154,7 @@ fun AiChatPanel(
                 EmptyAiState()
             } else {
                 val listState = rememberLazyListState()
-                LaunchedEffect(messages.size) {
+                LaunchedEffect(messages.size, isGenerating, isThinking) {
                     if (messages.isNotEmpty()) {
                         listState.animateScrollToItem(messages.lastIndex)
                     }
@@ -161,7 +171,11 @@ fun AiChatPanel(
                     }
                     if (isGenerating) {
                         item {
-                            GeneratingIndicator()
+                            if (isThinking) {
+                                ThinkingIndicator()
+                            } else {
+                                GeneratingIndicator()
+                            }
                         }
                     }
                 }
@@ -432,10 +446,19 @@ private fun MessageBubble(
                 )
             }
         }
+        // Tokens per second under assistant messages
+        if (!isUser && message.tokensPerSecond != null) {
+            Text(
+                text = "%.1f tok/s".format(message.tokensPerSecond),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.padding(start = 4.dp, top = 2.dp),
+            )
+        }
     }
 }
 
-private val codeBlockRegex = "```([\\s\\S]*?)```".toRegex()
+private val codeBlockRegex = "```(?:[A-Za-z0-9+#]*\\n)?([\\s\\S]*?)```".toRegex()
 
 @Composable
 private fun MessageContent(
@@ -463,6 +486,7 @@ private fun MessageContent(
 
 @Composable
 private fun CodeBlock(code: String) {
+    val scrollState = rememberScrollState()
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -471,13 +495,20 @@ private fun CodeBlock(code: String) {
             .background(MaterialTheme.colorScheme.background)
             .padding(12.dp),
     ) {
-        Text(
-            text = code,
-            style = MaterialTheme.typography.bodySmall.copy(
-                fontFamily = FontFamily.Monospace,
-            ),
-            color = MaterialTheme.colorScheme.onSurface,
-        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 300.dp)
+                .verticalScroll(scrollState),
+        ) {
+            Text(
+                text = code,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontFamily = FontFamily.Monospace,
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
     }
 }
 
@@ -493,30 +524,18 @@ private fun AgentStatusBadge(
         else -> role.name.uppercase()
     }
     val statusText = status?.name?.uppercase() ?: "THINKING"
-    val color = when (role) {
-        MessageRole.ARCHITECT -> Color(0xFFF59E0B)
-        MessageRole.CODER -> Color(0xFF22C55E)
-        MessageRole.VALIDATOR -> Color(0xFF38BDF8)
-        else -> MaterialTheme.colorScheme.primary
-    }
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(6.dp)
-                .clip(RoundedCornerShape(3.dp))
-                .background(color),
-        )
         Text(
             text = "$label \u2022 $statusText",
             style = MaterialTheme.typography.labelSmall.copy(
                 fontWeight = FontWeight.SemiBold,
             ),
-            color = color,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -537,6 +556,46 @@ private fun GeneratingIndicator() {
         Text(
             text = "Generating...",
             style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun ThinkingIndicator() {
+    val infiniteTransition = rememberInfiniteTransition(label = "thinking")
+    val rotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "rotation",
+    )
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Psychology,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .size(18.dp)
+                .rotate(rotation),
+        )
+        Text(
+            text = "Thinking...",
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontWeight = FontWeight.Medium,
+            ),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

@@ -8,7 +8,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.consumeAsFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -105,10 +109,25 @@ class LlamaCppRunner(
             var errorMessage: String? = null
             val generationDone = CompletableDeferred<Unit>()
 
-            try {
-                helper.predict(prompt)
-
+            // Bridge SharedFlow to a Channel so no events are lost between
+            // predict starting and collect subscribing. SharedFlow with
+            // replay=0 drops events that occur before a collector subscribes.
+            val eventChannel = Channel<LlamaHelper.LLMEvent>(capacity = 256)
+            val bridgeJob = scope.launch {
                 llmFlow.collect { event ->
+                    eventChannel.send(event)
+                }
+            }
+
+            var predictJob: Job? = null
+            try {
+                // Launch predict in a separate coroutine so that collect
+                // can receive token events concurrently. predict() is
+                // blocking and emits events to llmFlow; the bridge forwards
+                // them to the channel which buffers until we consume.
+                predictJob = scope.launch { helper.predict(prompt) }
+
+                eventChannel.consumeAsFlow().collect { event ->
                     when (event) {
                         is LlamaHelper.LLMEvent.Ongoing -> {
                             builder.append(event.word)
@@ -132,6 +151,10 @@ class LlamaCppRunner(
                 return@withLock LlmRunner.GenerateResult.Error(
                     t.message ?: t.javaClass.simpleName,
                 )
+            } finally {
+                predictJob?.cancel()
+                bridgeJob.cancel()
+                eventChannel.close()
             }
 
             generationDone.await()

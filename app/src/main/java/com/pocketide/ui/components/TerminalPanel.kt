@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,11 +17,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -91,11 +95,37 @@ fun TerminalPanel(
                 else -> MaterialTheme.colorScheme.onSurfaceVariant
             }
             if (statusText.isNotBlank()) {
-                Text(
-                    text = "● $statusText",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = statusColor,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(start = 4.dp),
+                ) {
+                    when (status) {
+                        ExecutionStatus.PASSED -> Icon(
+                            imageVector = Icons.Filled.CheckCircle,
+                            contentDescription = null,
+                            tint = statusColor,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        ExecutionStatus.FAILED -> Icon(
+                            imageVector = Icons.Filled.Error,
+                            contentDescription = null,
+                            tint = statusColor,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        ExecutionStatus.RUNNING -> CircularProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            strokeWidth = 2.dp,
+                            color = statusColor,
+                        )
+                        else -> {}
+                    }
+                    Text(
+                        text = statusText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = statusColor,
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.weight(1f))

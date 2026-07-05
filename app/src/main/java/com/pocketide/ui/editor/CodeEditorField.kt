@@ -6,7 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
@@ -77,14 +77,16 @@ fun CodeEditorField(
             modifier = Modifier
                 .weight(1f)
                 .horizontalScroll(horizontalScrollState)
-                .requiredHeight(contentHeight),
+                .height(contentHeight),
         ) {
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,
                 textStyle = textStyle,
                 visualTransformation = transformation,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(contentHeight),
             )
         }
     }

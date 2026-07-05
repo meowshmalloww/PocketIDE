@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.pocketide.data.model.CodeFile
 import com.pocketide.data.model.Language
 
@@ -121,13 +122,23 @@ private fun FileTab(
                 .weight(1f)
                 .padding(horizontal = 10.dp),
         ) {
-            // Language color dot
+            // Language abbreviation badge
             Box(
                 modifier = Modifier
-                    .size(8.dp)
+                    .size(18.dp)
                     .clip(RoundedCornerShape(4.dp))
-                    .background(languageColor(file.language)),
-            )
+                    .background(languageColor(file.language).copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = languageAbbrev(file.language),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold,
+                    ),
+                    color = languageColor(file.language),
+                )
+            }
             Text(
                 text = file.name,
                 style = MaterialTheme.typography.labelSmall.copy(
@@ -171,6 +182,23 @@ private fun FileTab(
                 .background(borderColor),
         )
     }
+}
+
+private fun languageAbbrev(language: Language): String = when (language) {
+    Language.PYTHON -> "PY"
+    Language.JAVASCRIPT -> "JS"
+    Language.TYPESCRIPT -> "TS"
+    Language.KOTLIN -> "KT"
+    Language.DART -> "DA"
+    Language.SQL -> "SQL"
+    Language.HTML -> "HTM"
+    Language.CSS -> "CSS"
+    Language.JAVA -> "JV"
+    Language.LUA -> "LUA"
+    Language.SHELL -> "SH"
+    Language.YAML -> "YML"
+    Language.MARKDOWN -> "MD"
+    Language.JSON -> "JSON"
 }
 
 private fun languageColor(language: Language): Color = when (language) {
