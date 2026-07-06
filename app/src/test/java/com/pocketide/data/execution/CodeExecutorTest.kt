@@ -113,20 +113,19 @@ class CodeExecutorTest {
     }
 
     @Test
-    fun `returns failed for unsupported language`() = runBlocking {
+    fun `python executes simple print`() = runBlocking {
         val result = executor.execute("print('hello')", Language.PYTHON)
 
-        assertEquals(ExecutionStatus.FAILED, result.status)
-        assertTrue("stderr should mention not supported", result.stderr.contains("not yet supported"))
-        assertEquals(-1, result.exitCode)
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertTrue(result.stdout.contains("hello"))
     }
 
     @Test
-    fun `returns failed for TypeScript`() = runBlocking {
-        val result = executor.execute("const x: number = 1;", Language.TYPESCRIPT)
+    fun `typescript executes with type stripping`() = runBlocking {
+        val result = executor.execute("const x: number = 1; console.log(x);", Language.TYPESCRIPT)
 
-        assertEquals(ExecutionStatus.FAILED, result.status)
-        assertTrue(result.stderr.contains("not yet supported"))
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertTrue(result.stdout.contains("1"))
     }
 
     @Test
