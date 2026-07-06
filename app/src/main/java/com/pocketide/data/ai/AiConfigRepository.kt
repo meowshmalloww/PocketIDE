@@ -4,8 +4,8 @@ import android.content.Context
 import androidx.core.content.edit
 
 private const val PREFS_NAME = "pocketide_prefs"
-private const val KEY_MODEL_PATH = "ai_model_path"
-private const val KEY_TOKENIZER_PATH = "ai_tokenizer_path"
+private const val KEY_MODELS = "ai_models"
+private const val KEY_ACTIVE_MODEL_INDEX = "ai_active_model_index"
 private const val KEY_TEMPERATURE = "ai_temperature"
 private const val KEY_MAX_SEQ_LEN = "ai_max_seq_len"
 private const val KEY_PROMPT_TEMPLATE = "ai_prompt_template"
@@ -25,8 +25,8 @@ class AiConfigRepository(context: Context) {
     fun load(): AiConfig {
         val default = AiConfig()
         return AiConfig(
-            modelPath = prefs.getString(KEY_MODEL_PATH, default.modelPath) ?: default.modelPath,
-            tokenizerPath = prefs.getString(KEY_TOKENIZER_PATH, default.tokenizerPath) ?: default.tokenizerPath,
+            models = deserializeModels(prefs.getString(KEY_MODELS, "") ?: ""),
+            activeModelIndex = prefs.getInt(KEY_ACTIVE_MODEL_INDEX, default.activeModelIndex),
             temperature = prefs.getFloat(KEY_TEMPERATURE, default.temperature),
             maxSeqLen = prefs.getInt(KEY_MAX_SEQ_LEN, default.maxSeqLen),
             promptTemplate = prefs.getString(KEY_PROMPT_TEMPLATE, default.promptTemplate.name)
@@ -45,8 +45,8 @@ class AiConfigRepository(context: Context) {
 
     fun save(config: AiConfig) {
         prefs.edit {
-            putString(KEY_MODEL_PATH, config.modelPath)
-            putString(KEY_TOKENIZER_PATH, config.tokenizerPath)
+            putString(KEY_MODELS, serializeModels(config.models))
+            putInt(KEY_ACTIVE_MODEL_INDEX, config.activeModelIndex)
             putFloat(KEY_TEMPERATURE, config.temperature)
             putInt(KEY_MAX_SEQ_LEN, config.maxSeqLen)
             putString(KEY_PROMPT_TEMPLATE, config.promptTemplate.name)
@@ -58,6 +58,26 @@ class AiConfigRepository(context: Context) {
             putInt(KEY_CONTEXT_WINDOW, config.contextWindowSize)
             putBoolean(KEY_ENABLE_CODE_CONTEXT, config.enableCodeContext)
             putBoolean(KEY_ENABLE_HISTORY_SUMMARY, config.enableHistorySummary)
+        }
+    }
+
+    private fun serializeModels(models: List<ModelEntry>): String {
+        return models.joinToString("\n") { entry ->
+            "${entry.name}\t${entry.modelPath}\t${entry.tokenizerPath}\t${entry.promptTemplate.name}"
+        }
+    }
+
+    private fun deserializeModels(data: String): List<ModelEntry> {
+        if (data.isBlank()) return emptyList()
+        return data.lines().mapNotNull { line ->
+            val parts = line.split("\t")
+            if (parts.size < 2) return@mapNotNull null
+            val name = parts[0]
+            val modelPath = parts[1]
+            val tokenizerPath = parts.getOrElse(2) { "" }
+            val template = parts.getOrElse(3) { "LLAMA3" }
+                .let { runCatching { PromptTemplate.valueOf(it) }.getOrNull() } ?: PromptTemplate.LLAMA3
+            ModelEntry(name = name, modelPath = modelPath, tokenizerPath = tokenizerPath, promptTemplate = template)
         }
     }
 }

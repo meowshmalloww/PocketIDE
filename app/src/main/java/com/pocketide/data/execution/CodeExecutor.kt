@@ -1,6 +1,7 @@
 package com.pocketide.data.execution
 
 import android.content.Context as AndroidContext
+import android.util.Log
 import android.database.sqlite.SQLiteDatabase
 import com.pocketide.data.hardware.HardwareBridge
 import com.pocketide.data.model.ExecutionResult
@@ -128,7 +129,7 @@ class CodeExecutor(
                 errorType = e.javaClass.simpleName,
             )
         } finally {
-            try { Context.exit() } catch (_: Exception) {}
+            try { Context.exit() } catch (e: Exception) { Log.w("CodeExecutor", "Context.exit failed", e) }
         }
     }
 
@@ -311,8 +312,8 @@ class CodeExecutor(
             val finished = process.waitFor(SHELL_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
             if (!finished) {
                 process.destroyForcibly()
-                try { process.inputStream.close() } catch (_: Exception) {}
-                try { process.errorStream.close() } catch (_: Exception) {}
+                try { process.inputStream.close() } catch (e: Exception) { Log.w("CodeExecutor", "close stdin failed", e) }
+                try { process.errorStream.close() } catch (e: Exception) { Log.w("CodeExecutor", "close stderr failed", e) }
                 return ExecutionResult(
                     status = ExecutionStatus.FAILED,
                     stdout = stdout.toString(),
@@ -771,7 +772,7 @@ class CodeExecutor(
                 errorType = e.javaClass.simpleName,
             )
         } finally {
-            try { db?.close() } catch (_: Exception) {}
+            try { db?.close() } catch (e: Exception) { Log.w("CodeExecutor", "db close failed", e) }
             dbFile.delete()
         }
     }

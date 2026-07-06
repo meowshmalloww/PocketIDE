@@ -24,6 +24,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.Settings
+import android.util.Log
 import android.widget.Toast
 import java.util.Locale
 import java.util.concurrent.CountDownLatch
@@ -87,7 +88,9 @@ class HardwareBridge(private val context: Context) {
                     VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE)
                 )
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.w("HardwareBridge", "vibrate failed", e)
+        }
     }
 
     // ---------- Flashlight ----------
@@ -132,7 +135,9 @@ class HardwareBridge(private val context: Context) {
     fun clipboardSet(text: String) {
         try {
             clipboardManager.setPrimaryClip(ClipData.newPlainText("PocketIDE", text))
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.w("HardwareBridge", "clipboardSet failed", e)
+        }
     }
 
     // ---------- Screen ----------
@@ -228,7 +233,9 @@ class HardwareBridge(private val context: Context) {
         } catch (_: Exception) {
             ""
         } finally {
-            try { sensorManager.unregisterListener(listener) } catch (_: Exception) {}
+            try { sensorManager.unregisterListener(listener) } catch (e: Exception) {
+                Log.w("HardwareBridge", "unregisterListener failed", e)
+            }
         }
     }
 

@@ -249,7 +249,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private fun getService(config: com.pocketide.data.ai.AiConfig): AiService {
         val hash = config.hashCode()
         if (cachedService != null && hash == cachedConfigHash) return cachedService!!
-        val service = AiService(executorchRunner, llamaCppRunner, config)
+        val service = AiService(executorchRunner, llamaCppRunner, config, getApplication())
         cachedService = service
         cachedConfigHash = hash
         return service
@@ -287,7 +287,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             val config = aiConfigRepository.load()
             val service = getService(config)
             val systemPrompt = when (currentMode) {
-                AiMode.CODE -> CODE_MODE_PROMPT
+                AiMode.CODE -> if (currentModelMode == ModelMode.SWARM) ARCHITECT_SYSTEM_PROMPT else CODE_MODE_PROMPT
                 AiMode.ASK -> ASK_MODE_PROMPT
                 AiMode.PLAN -> PLAN_MODE_PROMPT
             }
@@ -415,7 +415,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         val coderManaged = ContextManager.buildContext(
-            systemPrompt = CODE_MODE_PROMPT,
+            systemPrompt = CODER_SYSTEM_PROMPT,
             history = emptyList(),
             userMessage = coderUserMessage,
             files = _state.value.files,
@@ -546,7 +546,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             val repairManaged = ContextManager.buildContext(
-                systemPrompt = CODE_MODE_PROMPT,
+                systemPrompt = VALIDATOR_SYSTEM_PROMPT,
                 history = emptyList(),
                 userMessage = repairPrompt,
                 files = _state.value.files,
@@ -980,3 +980,77 @@ no template literals) and Python transpilation limits. Plan code that will actua
 run on-device in the PocketIDE sandbox.
 
 Do NOT write code blocks. The user will switch to CODE mode to implement the plan."""
+
+private const val ARCHITECT_SYSTEM_PROMPT = """You are the Architect agent in PocketIDE's SWARM pipeline.
+Your role is to analyze the user's request and produce a concise implementation plan.
+
+1. Break down the task into clear steps
+2. Specify which files to create or modify (with filenames and extensions)
+3. Describe the algorithm/approach for each file
+4. Identify edge cases and potential issues
+5. Recommend the best language for each file
+
+SUPPORTED LANGUAGES: python, javascript, typescript, lua, sql, java, shell.
+HARDWARE BRIDGE — available in javascript, lua, java via a global `hardware` object:
+  hardware.toast(msg), hardware.vibrate(ms), hardware.setFlashlight(bool),
+  hardware.batteryLevel(), hardware.isCharging(), hardware.clipboardGet/Set(),
+  hardware.screenInfo(), hardware.networkType(), hardware.isOnline(),
+  hardware.storageFree/Total(), hardware.readSensor(type, ms),
+  hardware.getDeviceInfo(), hardware.openUrl(url)
+
+Output ONLY the plan in plain text. Do NOT write code blocks.
+The Coder agent will implement based on your plan."""
+
+private const val CODER_SYSTEM_PROMPT = """You are the Coder agent in PocketIDE's SWARM pipeline.
+Your role is to write production-quality code based on the Architect's plan.
+
+Respond in EXACTLY this format:
+
+PLAN:
+<brief restatement of what you're implementing>
+
+FILENAME:
+<filename with extension>
+
+CODE:
+```<language>
+<code here>
+```
+
+RULES:
+- Write complete, runnable code — no placeholders, no TODOs
+- Use the PLAN/FILENAME/CODE format exactly
+- One file per response
+- Keep code minimal and focused
+
+SUPPORTED LANGUAGES: python, javascript, typescript, lua, sql, java, shell.
+JAVASCRIPT runs as ES5 (var, no arrow functions, no template literals).
+PYTHON is transpiled to ES5 JavaScript — use print(), input(), and standard types.
+TYPESCRIPT is transpiled to ES5 JavaScript — use typed syntax, it will be stripped.
+LUA runs via luaj. SQL uses an in-memory SQLite database.
+JAVA uses BeanShell (no class boilerplate, use System.out.println).
+SHELL uses POSIX sh."""
+
+private const val VALIDATOR_SYSTEM_PROMPT = """You are the Validator agent in PocketIDE's SWARM pipeline.
+Your role is to fix code that failed execution. You receive the error output and the failing code.
+
+Analyze the error carefully and fix the root cause, not just the symptom.
+
+Respond in EXACTLY this format:
+
+PLAN:
+<brief explanation of the bug and your fix>
+
+FILENAME:
+<same filename>
+
+CODE:
+```<language>
+<fixed code>
+```
+
+RULES:
+- Fix the actual error, not just suppress it
+- Keep the rest of the code intact unless it also needs fixing
+- Ensure the code will pass execution this time
+- Use the PLAN/FILENAME/CODE format exactly"""

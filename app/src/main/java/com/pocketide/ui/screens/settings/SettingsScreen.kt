@@ -32,7 +32,8 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.ModelTraining
@@ -41,11 +42,14 @@ import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -56,9 +60,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,10 +74,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.pocketide.data.ai.AiConfig
 import com.pocketide.data.ai.AiConfigRepository
+import com.pocketide.data.ai.ModelDownloader
+import com.pocketide.data.ai.ModelEntry
+import com.pocketide.data.ai.PromptTemplate
 import com.pocketide.data.ai.Quantization
 import com.pocketide.data.model.Language
 import com.pocketide.ui.theme.ThemeColors
@@ -161,6 +172,7 @@ fun SettingsScreen(
                         isDarkMode = isDarkMode,
                         onPersist = ::persistAiConfig,
                         onThemeChange = { themeViewModel.setDarkMode(it) },
+                        selectedSection = selectedSection,
                     )
                 }
             }
@@ -180,6 +192,7 @@ fun SettingsScreen(
                     isDarkMode = isDarkMode,
                     onPersist = ::persistAiConfig,
                     onThemeChange = { themeViewModel.setDarkMode(it) },
+                    selectedSection = -1,
                 )
             }
         }
@@ -192,25 +205,42 @@ private fun SettingsContent(
     isDarkMode: Boolean,
     onPersist: ((AiConfig) -> AiConfig) -> Unit,
     onThemeChange: (Boolean) -> Unit,
+    selectedSection: Int = -1,
 ) {
-    // Appearance
-    SectionHeader("Appearance")
-    SettingsGroup {
-        IconToggleRow(
-            icon = Icons.Filled.DarkMode,
-            title = "Dark mode",
-            subtitle = "Use dark theme",
-            checked = isDarkMode,
-            onCheckedChange = onThemeChange,
-        )
+    // Section indices match the sidebar list:
+    // 0=General, 1=On-Device Model, 2=Optimization, 3=Agent, 4=Sandbox Languages
+    // -1 means show all (portrait mode)
+
+    if (selectedSection == -1 || selectedSection == 0) {
+        // Appearance
+        SectionHeader("Appearance")
+        SettingsGroup {
+            IconToggleRow(
+                icon = Icons.Filled.DarkMode,
+                title = "Dark mode",
+                subtitle = "Use dark theme",
+                checked = isDarkMode,
+                onCheckedChange = onThemeChange,
+            )
+        }
     }
 
+    if (selectedSection == -1 || selectedSection == 1) {
     // On-Device Model
     SectionHeader("On-Device Model")
     SettingsGroup {
-        ModelPathRow(
-            path = aiConfig.modelPath,
-            onPathChange = { value -> onPersist { it.copy(modelPath = value) } },
+        ModelManagerSection(
+            models = aiConfig.models,
+            activeModelIndex = aiConfig.activeModelIndex,
+            onSelectModel = { index -> onPersist { it.copy(activeModelIndex = index) } },
+            onAddModel = { entry -> onPersist { it.copy(models = it.models + entry) } },
+            onRemoveModel = { index -> onPersist {
+                val newModels = it.models.toMutableList()
+                val wasActive = it.activeModelIndex == index
+                newModels.removeAt(index)
+                val newActive = if (newModels.isEmpty()) 0 else if (wasActive) (index - 1).coerceAtLeast(0) else it.activeModelIndex.coerceAtMost(newModels.lastIndex)
+                it.copy(models = newModels, activeModelIndex = newActive)
+            } },
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
         Text(
@@ -241,7 +271,9 @@ private fun SettingsContent(
             isDark = isDarkMode,
         )
     }
+    }
 
+    if (selectedSection == -1 || selectedSection == 2) {
     // Optimization
     SectionHeader("Optimization")
     SettingsGroup {
@@ -269,7 +301,9 @@ private fun SettingsContent(
             onCheckedChange = { value -> onPersist { it.copy(adaptiveCores = value) } },
         )
     }
+    }
 
+    if (selectedSection == -1 || selectedSection == 3) {
     // Agent
     SectionHeader("Agent")
     SettingsGroup {
@@ -382,7 +416,9 @@ private fun SettingsContent(
             onCheckedChange = { v -> onPersist { it.copy(enableHistorySummary = v) } },
         )
     }
+    }
 
+    if (selectedSection == -1 || selectedSection == 4) {
     // Sandbox Languages
     SectionHeader("Sandbox Languages")
     SettingsGroup {
@@ -407,6 +443,7 @@ private fun SettingsContent(
                 )
             }
         }
+    }
     }
 
     Spacer(modifier = Modifier.height(8.dp))
@@ -551,51 +588,405 @@ private fun IconToggleRow(
 }
 
 @Composable
-private fun ModelPathRow(
-    path: String,
-    onPathChange: (String) -> Unit,
+private fun ModelManagerSection(
+    models: List<ModelEntry>,
+    activeModelIndex: Int,
+    onSelectModel: (Int) -> Unit,
+    onAddModel: (ModelEntry) -> Unit,
+    onRemoveModel: (Int) -> Unit,
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Box(
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val downloader = remember { ModelDownloader(context) }
+
+    var showAddForm by remember { mutableStateOf(false) }
+    var showDownloadForm by remember { mutableStateOf(false) }
+    var isDownloading by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableFloatStateOf(0f) }
+    var downloadError by remember { mutableStateOf<String?>(null) }
+    var dlUrl by remember { mutableStateOf("") }
+    var dlName by remember { mutableStateOf("") }
+    var dlTemplate by remember { mutableStateOf(PromptTemplate.LLAMA3) }
+
+    var newName by remember { mutableStateOf("") }
+    var newPath by remember { mutableStateOf("") }
+    var newTokenizer by remember { mutableStateOf("") }
+    var newTemplate by remember { mutableStateOf(PromptTemplate.LLAMA3) }
+
+    // List existing models
+    if (models.isNotEmpty()) {
+        models.forEachIndexed { index, model ->
+            val isActive = index == activeModelIndex
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                        if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                        else Color.Transparent,
+                    )
+                    .clickable { onSelectModel(index) }
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+            ) {
+                Icon(
+                    imageVector = if (isActive) Icons.Filled.Check else Icons.Filled.ModelTraining,
+                    contentDescription = null,
+                    tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 8.dp),
+                ) {
+                    Text(
+                        text = model.name,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = model.modelPath,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+                IconButton(
+                    onClick = { onRemoveModel(index) },
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Delete,
+                        contentDescription = "Remove model",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+            if (index < models.lastIndex) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+            }
+        }
+    } else {
+        Text(
+            text = "No models added yet. Tap \"Add Model\" below.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(vertical = 8.dp),
+        )
+    }
+
+    Spacer(modifier = Modifier.height(4.dp))
+
+    // Download from URL section
+    if (isDownloading) {
+        Column(
             modifier = Modifier
-                .size(36.dp)
+                .fillMaxWidth()
                 .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f))
-                .padding(8.dp),
-            contentAlignment = Alignment.Center,
+                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = "Downloading ${dlName.ifBlank { "model" } }...",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            LinearProgressIndicator(
+                progress = { downloadProgress },
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+            )
+            Text(
+                text = "${(downloadProgress * 100).toInt()}%",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    } else {
+        downloadError?.let { error ->
+            Text(
+                text = "Download failed: $error",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(vertical = 4.dp),
+            )
+        }
+
+        if (showDownloadForm) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = dlName,
+                    onValueChange = { dlName = it },
+                    label = { Text("Model name", style = MaterialTheme.typography.labelSmall) },
+                    placeholder = { Text("e.g. My Fine-Tuned Qwen 1.5B") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        focusedBorderColor = MaterialTheme.colorScheme.outline,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                        cursorColor = MaterialTheme.colorScheme.primary,
+                    ),
+                )
+                OutlinedTextField(
+                    value = dlUrl,
+                    onValueChange = { dlUrl = it },
+                    label = { Text("HuggingFace download URL", style = MaterialTheme.typography.labelSmall) },
+                    placeholder = { Text("https://huggingface.co/user/repo/resolve/main/model.gguf") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        focusedBorderColor = MaterialTheme.colorScheme.outline,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                        cursorColor = MaterialTheme.colorScheme.primary,
+                    ),
+                )
+                Text(
+                    text = "Prompt template",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PromptTemplate.entries.forEach { template ->
+                        SelectableChip(
+                            selected = dlTemplate == template,
+                            label = template.displayName,
+                            onClick = { dlTemplate = template },
+                        )
+                    }
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    androidx.compose.material3.TextButton(
+                        onClick = {
+                            showDownloadForm = false
+                            dlUrl = ""
+                            dlName = ""
+                            dlTemplate = PromptTemplate.LLAMA3
+                        },
+                    ) {
+                        Text("Cancel")
+                    }
+                    androidx.compose.material3.Button(
+                        onClick = {
+                        val fileName = dlUrl.substringAfterLast("/").ifBlank { "model.bin" }
+                        isDownloading = true
+                        downloadProgress = 0f
+                        downloadError = null
+                        scope.launch {
+                            val result = downloader.download(
+                                downloadUrl = dlUrl.trim(),
+                                fileName = fileName,
+                            ) { percent ->
+                                downloadProgress = percent / 100f
+                            }
+                            when (result) {
+                                is ModelDownloader.DownloadResult.Success -> {
+                                    onAddModel(
+                                        ModelEntry(
+                                            name = dlName.trim().ifBlank { fileName },
+                                            modelPath = result.savedPath,
+                                            promptTemplate = dlTemplate,
+                                        ),
+                                    )
+                                    showDownloadForm = false
+                                    dlUrl = ""
+                                    dlName = ""
+                                    dlTemplate = PromptTemplate.LLAMA3
+                                }
+                                is ModelDownloader.DownloadResult.Error -> {
+                                    downloadError = result.message
+                                }
+                            }
+                            isDownloading = false
+                        }
+                    },
+                        enabled = dlUrl.isNotBlank(),
+                    ) {
+                        Text("Download")
+                    }
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
+                    .clickable { showDownloadForm = true }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Download,
+                    contentDescription = "Download model from URL",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text(
+                    text = "Download from URL",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(4.dp))
+
+    if (showAddForm) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = newName,
+                onValueChange = { newName = it },
+                label = { Text("Model name", style = MaterialTheme.typography.labelSmall) },
+                placeholder = { Text("e.g. Qwen 2.5 0.5B") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                textStyle = MaterialTheme.typography.bodySmall,
+                shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    focusedBorderColor = MaterialTheme.colorScheme.outline,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                    cursorColor = MaterialTheme.colorScheme.primary,
+                ),
+            )
+            OutlinedTextField(
+                value = newPath,
+                onValueChange = { newPath = it },
+                label = { Text("Model file path", style = MaterialTheme.typography.labelSmall) },
+                placeholder = { Text("/sdcard/models/model.gguf or .pte") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                textStyle = MaterialTheme.typography.bodySmall,
+                shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    focusedBorderColor = MaterialTheme.colorScheme.outline,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                    cursorColor = MaterialTheme.colorScheme.primary,
+                ),
+            )
+            OutlinedTextField(
+                value = newTokenizer,
+                onValueChange = { newTokenizer = it },
+                label = { Text("Tokenizer path (PTE only)", style = MaterialTheme.typography.labelSmall) },
+                placeholder = { Text("/sdcard/models/tokenizer.bin") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                textStyle = MaterialTheme.typography.bodySmall,
+                shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    focusedBorderColor = MaterialTheme.colorScheme.outline,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                    cursorColor = MaterialTheme.colorScheme.primary,
+                ),
+            )
+            Text(
+                text = "Prompt template",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PromptTemplate.entries.forEach { template ->
+                    SelectableChip(
+                        selected = newTemplate == template,
+                        label = template.displayName,
+                        onClick = { newTemplate = template },
+                    )
+                }
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        showAddForm = false
+                        newName = ""
+                        newPath = ""
+                        newTokenizer = ""
+                        newTemplate = PromptTemplate.LLAMA3
+                    },
+                ) {
+                    Text("Cancel")
+                }
+                androidx.compose.material3.Button(
+                    onClick = {
+                        if (newName.isNotBlank() && newPath.isNotBlank()) {
+                            onAddModel(
+                                ModelEntry(
+                                    name = newName.trim(),
+                                    modelPath = newPath.trim(),
+                                    tokenizerPath = newTokenizer.trim(),
+                                    promptTemplate = newTemplate,
+                                ),
+                            )
+                            showAddForm = false
+                            newName = ""
+                            newPath = ""
+                            newTokenizer = ""
+                            newTemplate = PromptTemplate.LLAMA3
+                        }
+                    },
+                    enabled = newName.isNotBlank() && newPath.isNotBlank(),
+                ) {
+                    Text("Save")
+                }
+            }
+        }
+    } else {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
+                .clickable { showAddForm = true }
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Icon(
                 imageVector = Icons.Filled.CreateNewFolder,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(16.dp),
             )
-        }
-        OutlinedTextField(
-            value = path,
-            onValueChange = onPathChange,
-            label = { Text("Model file", style = MaterialTheme.typography.labelSmall) },
-            placeholder = { Text("/sdcard/models/model.gguf or .pte") },
-            singleLine = true,
-            modifier = Modifier
-                .weight(1f)
-                .padding(start = 12.dp),
-            textStyle = MaterialTheme.typography.bodySmall,
-            shape = RoundedCornerShape(12.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = MaterialTheme.colorScheme.outline,
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-            ),
-        )
-        IconButton(onClick = { /* TODO: open file picker */ }) {
-            Icon(
-                imageVector = Icons.Filled.FolderOpen,
-                contentDescription = "Browse model file",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp),
+            Text(
+                text = "Add Model",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.primary,
             )
         }
     }
@@ -682,11 +1073,11 @@ private fun StatusPill(
             .background(color.copy(alpha = 0.12f))
             .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(6.dp)
-                .clip(RoundedCornerShape(3.dp))
-                .background(color),
+        Icon(
+            imageVector = if (isError) Icons.Filled.Warning else Icons.Filled.Check,
+            contentDescription = null,
+            tint = color,
+            modifier = Modifier.size(14.dp),
         )
         Text(
             text = text,

@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -30,12 +31,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,6 +50,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -182,16 +189,12 @@ fun AiChatPanel(
             }
         }
 
-        // Mode tabs (Code / Ask / Plan)
-        ModeTabRow(
-            selectedMode = aiMode,
-            onModeChange = onAiModeChange,
-        )
-
-        // Model selector (Single / Swarm)
-        ModelSelectorRow(
-            selectedMode = modelMode,
-            onModeChange = onModelModeChange,
+        // Mode and model selectors as dropdowns
+        ModeAndModelDropdowns(
+            aiMode = aiMode,
+            onAiModeChange = onAiModeChange,
+            modelMode = modelMode,
+            onModelModeChange = onModelModeChange,
         )
 
         // Compact input area — send icon inside the text field
@@ -225,7 +228,7 @@ fun AiChatPanel(
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
                             strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = MaterialTheme.colorScheme.onSurface,
                         )
                     } else {
                         Icon(
@@ -234,7 +237,7 @@ fun AiChatPanel(
                             tint = if (inputText.isNotBlank()) {
                                 MaterialTheme.colorScheme.primary
                             } else {
-                                MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                             },
                             modifier = Modifier.size(18.dp),
                         )
@@ -242,119 +245,166 @@ fun AiChatPanel(
                 }
             },
             colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                 focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
                 unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                cursorColor = MaterialTheme.colorScheme.primary,
             ),
         )
     }
 }
 
 @Composable
-private fun ModeTabRow(
-    selectedMode: AiMode,
-    onModeChange: (AiMode) -> Unit,
+private fun ModeAndModelDropdowns(
+    aiMode: AiMode,
+    onAiModeChange: (AiMode) -> Unit,
+    modelMode: ModelMode,
+    onModelModeChange: (ModelMode) -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        AiMode.entries.forEach { mode ->
-            val isSelected = mode == selectedMode
-            val icon = when (mode) {
-                AiMode.CODE -> Icons.Filled.Code
-                AiMode.ASK -> Icons.AutoMirrored.Filled.HelpOutline
-                AiMode.PLAN -> Icons.AutoMirrored.Filled.ListAlt
-            }
-            val bg = if (isSelected) {
-                MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-            } else {
-                Color.Transparent
-            }
-            val content = if (isSelected) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(bg)
-                    .clickable { onModeChange(mode) }
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = content,
-                    modifier = Modifier.size(14.dp),
-                )
-                Text(
-                    text = mode.displayName,
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                    ),
-                    color = content,
-                )
-            }
-        }
-    }
-}
+    var modeMenuExpanded by remember { mutableStateOf(false) }
+    var agentMenuExpanded by remember { mutableStateOf(false) }
 
-@Composable
-private fun ModelSelectorRow(
-    selectedMode: ModelMode,
-    onModeChange: (ModelMode) -> Unit,
-) {
+    val modeIcon = when (aiMode) {
+        AiMode.CODE -> Icons.Filled.Code
+        AiMode.ASK -> Icons.AutoMirrored.Filled.HelpOutline
+        AiMode.PLAN -> Icons.AutoMirrored.Filled.ListAlt
+    }
+    val agentIcon = when (modelMode) {
+        ModelMode.SINGLE -> Icons.Filled.Psychology
+        ModelMode.SWARM -> Icons.Filled.Hub
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        ModelMode.entries.forEach { mode ->
-            val isSelected = mode == selectedMode
-            val icon = when (mode) {
-                ModelMode.SINGLE -> Icons.Filled.Psychology
-                ModelMode.SWARM -> Icons.Filled.Hub
-            }
-            val bg = if (isSelected) {
-                MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
-            } else {
-                Color.Transparent
-            }
-            val content = if (isSelected) {
-                MaterialTheme.colorScheme.onSecondaryContainer
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            }
+        // Mode dropdown (Code / Ask / Plan)
+        Box(
+            modifier = Modifier.weight(1f),
+        ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier
-                    .weight(1f)
+                    .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
-                    .background(bg)
-                    .clickable { onModeChange(mode) }
-                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    .clickable { modeMenuExpanded = true }
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
             ) {
                 Icon(
-                    imageVector = icon,
+                    imageVector = modeIcon,
                     contentDescription = null,
-                    tint = content,
-                    modifier = Modifier.size(13.dp),
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(14.dp),
                 )
                 Text(
-                    text = mode.displayName,
+                    text = aiMode.displayName,
                     style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                        fontWeight = FontWeight.SemiBold,
                     ),
-                    color = content,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
+                Spacer(modifier = Modifier.weight(1f))
+                Icon(
+                    imageVector = Icons.Filled.ArrowDropDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            DropdownMenu(
+                expanded = modeMenuExpanded,
+                onDismissRequest = { modeMenuExpanded = false },
+                containerColor = MaterialTheme.colorScheme.surface,
+            ) {
+                AiMode.entries.forEach { mode ->
+                    DropdownMenuItem(
+                        text = { Text(mode.displayName, color = MaterialTheme.colorScheme.onSurface) },
+                        onClick = {
+                            onAiModeChange(mode)
+                            modeMenuExpanded = false
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = when (mode) {
+                                    AiMode.CODE -> Icons.Filled.Code
+                                    AiMode.ASK -> Icons.AutoMirrored.Filled.HelpOutline
+                                    AiMode.PLAN -> Icons.AutoMirrored.Filled.ListAlt
+                                },
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        },
+                    )
+                }
+            }
+        }
+
+        // Agent mode dropdown (Single / Swarm)
+        Box(
+            modifier = Modifier.weight(1f),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    .clickable { agentMenuExpanded = true }
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+            ) {
+                Icon(
+                    imageVector = agentIcon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    text = modelMode.displayName,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                Icon(
+                    imageVector = Icons.Filled.ArrowDropDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            DropdownMenu(
+                expanded = agentMenuExpanded,
+                onDismissRequest = { agentMenuExpanded = false },
+                containerColor = MaterialTheme.colorScheme.surface,
+            ) {
+                ModelMode.entries.forEach { mode ->
+                    DropdownMenuItem(
+                        text = { Text(mode.displayName, color = MaterialTheme.colorScheme.onSurface) },
+                        onClick = {
+                            onModelModeChange(mode)
+                            agentMenuExpanded = false
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = when (mode) {
+                                    ModelMode.SINGLE -> Icons.Filled.Psychology
+                                    ModelMode.SWARM -> Icons.Filled.Hub
+                                },
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        },
+                    )
+                }
             }
         }
     }

@@ -65,6 +65,7 @@ class ExecutorchLlmRunner(
             releaseLocked()
 
             try {
+                BackendInfo.logBackendInfo()
                 val newModule = LlmModule(modelPath, tokenizerPath, temperature)
                 val loadCode = newModule.load()
                 if (loadCode != 0) {

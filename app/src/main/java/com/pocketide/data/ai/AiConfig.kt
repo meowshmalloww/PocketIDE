@@ -1,8 +1,28 @@
 package com.pocketide.data.ai
 
-data class AiConfig(
-    val modelPath: String = "",
+data class ModelEntry(
+    val name: String,
+    val modelPath: String,
     val tokenizerPath: String = "",
+    val promptTemplate: PromptTemplate = PromptTemplate.LLAMA3,
+) {
+    val format: ModelFormat get() = when {
+        modelPath.endsWith(".gguf", ignoreCase = true) -> ModelFormat.GGUF
+        modelPath.endsWith(".pte", ignoreCase = true) -> ModelFormat.PTE
+        else -> ModelFormat.UNKNOWN
+    }
+
+    val isConfigured: Boolean
+        get() = when (format) {
+            ModelFormat.GGUF -> modelPath.isNotBlank()
+            ModelFormat.PTE -> modelPath.isNotBlank() && tokenizerPath.isNotBlank()
+            ModelFormat.UNKNOWN -> false
+        }
+}
+
+data class AiConfig(
+    val models: List<ModelEntry> = emptyList(),
+    val activeModelIndex: Int = 0,
     val temperature: Float = 0.6f,
     val maxSeqLen: Int = 1024,
     val promptTemplate: PromptTemplate = PromptTemplate.LLAMA3,
@@ -15,18 +35,20 @@ data class AiConfig(
     val enableCodeContext: Boolean = true,
     val enableHistorySummary: Boolean = true,
 ) {
-    val modelFormat: ModelFormat get() = when {
-        modelPath.endsWith(".gguf", ignoreCase = true) -> ModelFormat.GGUF
-        modelPath.endsWith(".pte", ignoreCase = true) -> ModelFormat.PTE
-        else -> ModelFormat.UNKNOWN
-    }
+    val activeModel: ModelEntry?
+        get() = models.getOrNull(activeModelIndex)
+
+    val modelPath: String
+        get() = activeModel?.modelPath ?: ""
+
+    val tokenizerPath: String
+        get() = activeModel?.tokenizerPath ?: ""
+
+    val modelFormat: ModelFormat
+        get() = activeModel?.format ?: ModelFormat.UNKNOWN
 
     val isConfigured: Boolean
-        get() = when (modelFormat) {
-            ModelFormat.GGUF -> modelPath.isNotBlank()
-            ModelFormat.PTE -> modelPath.isNotBlank() && tokenizerPath.isNotBlank()
-            ModelFormat.UNKNOWN -> false
-        }
+        get() = activeModel?.isConfigured ?: false
 }
 
 enum class ModelFormat(val displayName: String, val fileExtension: String) {
