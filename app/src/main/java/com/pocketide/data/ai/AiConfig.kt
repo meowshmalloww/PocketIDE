@@ -11,6 +11,9 @@ data class AiConfig(
     val thermalAware: Boolean = true,
     val adaptiveCores: Boolean = true,
     val maxRepairIterations: Int = 3,
+    val contextWindowSize: Int = 4096,
+    val enableCodeContext: Boolean = true,
+    val enableHistorySummary: Boolean = true,
 ) {
     val modelFormat: ModelFormat get() = when {
         modelPath.endsWith(".gguf", ignoreCase = true) -> ModelFormat.GGUF

@@ -49,7 +49,7 @@ Python, JavaScript, TypeScript, Kotlin, Dart, SQL, HTML, CSS, Java, Lua, Shell, 
 - **Draggable panels** — explorer width, terminal height, AI overlay width all adjustable via drag handles
 - **Extensions panel** — browse available extensions
 - **Dark/light theme** — VS Code-inspired neutral palette with persisted preference
-- **Settings screen** — on-device model config (`.pte` or `.gguf`), optimization toggles (power saving, thermal-aware, adaptive cores), agent repair iterations, sandbox language enable/disable
+- **Settings screen** — on-device model config (`.pte` or `.gguf`), optimization toggles (power saving, thermal-aware, adaptive cores), agent repair iterations, context window size, code context injection, history summarization, sandbox language enable/disable
 
 ## Tech Stack
 
@@ -208,6 +208,7 @@ PocketIDE/
 │   │   │   ├── AiConfigRepository.kt        # SharedPreferences persistence
 │   │   │   ├── AiService.kt                 # On-device inference orchestrator
 │   │   │   ├── AiResponseParser.kt          # PLAN/FILENAME/code-block parser
+│   │   │   ├── ContextManager.kt           # Context window management (sliding window, compression, RAG)
 │   │   │   ├── ExecutorchLlmRunner.kt       # ExecuTorch LlmModule wrapper
 │   │   │   ├── LlamaCppRunner.kt            # llama.cpp GGUF wrapper
 │   │   │   ├── LlmRunner.kt                 # Unified runner interface + dispatcher
@@ -231,6 +232,70 @@ PocketIDE/
 ├── gradle/libs.versions.toml                # Version catalog
 └── README.md
 ```
+
+## SWARM Mode (Multi-Agent Pipeline)
+
+When **SWARM** mode is selected in the AI chat panel, PocketIDE orchestrates a multi-agent pipeline that mirrors a real development team:
+
+### Pipeline Steps
+
+1. **Architect** — Receives the user's request and generates a high-level plan (what files to create, what approach to take, which language to use).
+2. **Coder** — Takes the Architect's plan and generates the actual code following the PLAN/FILENAME/code block format.
+3. **Auto-Execute** — The generated code is automatically executed in the sandbox.
+4. **Validator (Autonomous Repair Loop)** — If execution fails, the Validator sends the error details (error type, line, column, stderr) back to the AI for repair. This loop repeats up to `maxRepairIterations` times (configurable in Settings, default 3) or until the code executes successfully.
+
+### Agent Status Indicators
+
+Each agent's status is displayed in real-time via status badges in the chat panel:
+- **IDLE** — Agent hasn't started yet
+- **LOADING/GENERATING** — Agent is actively working
+- **DONE** — Agent completed successfully
+- **ERROR** — Agent encountered an error
+
+### Single vs. Swarm Mode
+
+| Feature | Single Model | Swarm Agent |
+|---|---|---|
+| Pipeline | One AI call → response | Architect → Coder → Validator |
+| Auto-execute | No | Yes (after Coder generates) |
+| Auto-repair | Manual (Repair button) | Autonomous (up to N iterations) |
+| Best for | Quick code, questions, plans | Complex apps, multi-step tasks |
+
+## Context Window Management
+
+Small on-device LLMs (0.5B–7B) typically support 2K–8K tokens of context. PocketIDE includes a **ContextManager** that intelligently manages this limited budget to handle complex, multi-file projects.
+
+### How It Works
+
+1. **Token Estimation** — Rough heuristic (~4 chars/token) to budget context allocation.
+2. **Sliding Window** — Keeps the most recent conversation messages intact; older messages are dropped when the budget is exceeded.
+3. **History Summarization** — Dropped messages are compressed into a single summary line (e.g., "User asked: create a calculator app...") so the AI retains context without consuming the full token budget.
+4. **Code Context Injection (RAG-style)** — Snippets of open project files are injected into the system prompt:
+   - The **active file** gets full content included (or truncated if too large).
+   - **Other files** get summaries (first 15 lines + line count).
+   - This gives the AI multi-file awareness without exceeding the context window.
+5. **Token Budget Allocation** — The context window is divided across:
+   - System prompt (always included in full)
+   - Code context (40% of remaining budget)
+   - Conversation history (60% of remaining budget)
+   - User message (always included in full)
+   - Response generation (25% of window, capped at 2048 tokens)
+
+### Configurable Settings
+
+| Setting | Default | Range | Description |
+|---|---|---|---|
+| Context window size | 4096 | 2K–128K | Match to your model's context length |
+| Inject code context | On | On/Off | Include open file snippets in prompts |
+| Summarize old history | On | On/Off | Compress dropped messages into summaries |
+
+### Supported Context Window Sizes
+
+The slider in Settings offers these presets: **2K, 4K, 8K, 16K, 32K, 64K, 128K** tokens.
+
+For models like Qwen 2.5 0.5B (32K context) or Llama 3.2 1B (128K context), set the context window size to match. The ContextManager will then include more conversation history and code context, enabling the AI to handle larger, more complex projects.
+
+> **Note:** Setting a context window larger than what the model actually supports will cause the model to truncate or ignore excess tokens. Always match this to your model's documented context length.
 
 ## Roadmap
 

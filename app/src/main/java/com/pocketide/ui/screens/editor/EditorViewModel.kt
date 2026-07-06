@@ -7,6 +7,7 @@ import com.pocketide.data.ai.AiConfigRepository
 import com.pocketide.data.ai.AiResult
 import com.pocketide.data.ai.AiService
 import com.pocketide.data.ai.ChatTurn
+import com.pocketide.data.ai.ContextManager
 import com.pocketide.data.ai.ExecutorchLlmRunner
 import com.pocketide.data.ai.LlamaCppRunner
 import com.pocketide.data.ai.parseAiResponse
@@ -69,6 +70,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private val llamaCppRunner = LlamaCppRunner(application)
     private val _state = MutableStateFlow(EditorUiState())
     val state: StateFlow<EditorUiState> = _state.asStateFlow()
+    private var cachedService: AiService? = null
+    private var cachedConfigHash: Int = 0
 
     override fun onCleared() {
         super.onCleared()
@@ -243,11 +246,21 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun getService(config: com.pocketide.data.ai.AiConfig): AiService {
+        val hash = config.hashCode()
+        if (cachedService != null && hash == cachedConfigHash) return cachedService!!
+        val service = AiService(executorchRunner, llamaCppRunner, config)
+        cachedService = service
+        cachedConfigHash = hash
+        return service
+    }
+
     fun sendMessage() {
         val prompt = _state.value.inputText.trim()
         if (prompt.isBlank()) return
 
         val currentMode = _state.value.aiMode
+        val currentModelMode = _state.value.modelMode
         val historyForRequest = _state.value.messages.mapNotNull { message ->
             when (message.role) {
                 MessageRole.USER -> ChatTurn(role = "user", content = message.content)
@@ -265,27 +278,39 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 isThinking = true,
                 architectStatus = AgentStatus.LOADING,
                 coderStatus = AgentStatus.IDLE,
+                validatorStatus = AgentStatus.IDLE,
                 activeTab = ActivityTab.AI_CHAT,
             )
         }
 
         viewModelScope.launch {
             val config = aiConfigRepository.load()
-            val service = AiService(executorchRunner, llamaCppRunner, config)
+            val service = getService(config)
             val systemPrompt = when (currentMode) {
                 AiMode.CODE -> CODE_MODE_PROMPT
                 AiMode.ASK -> ASK_MODE_PROMPT
                 AiMode.PLAN -> PLAN_MODE_PROMPT
             }
 
-            val startTime = System.currentTimeMillis()
-            var tokenCount = 0
-            val tokenInterval = System.currentTimeMillis()
-
-            val result = service.chatCompletion(
+            // Build managed context to fit within the model's context window
+            val managed = ContextManager.buildContext(
                 systemPrompt = systemPrompt,
                 history = historyForRequest,
                 userMessage = prompt,
+                files = _state.value.files,
+                contextWindowSize = config.contextWindowSize,
+                activeFileIndex = _state.value.activeFileIndex,
+                enableCodeContext = config.enableCodeContext,
+                enableHistorySummary = config.enableHistorySummary,
+            )
+
+            val startTime = System.currentTimeMillis()
+            var tokenCount = 0
+
+            val result = service.chatCompletion(
+                systemPrompt = managed.systemPrompt,
+                history = managed.history,
+                userMessage = managed.userMessage,
                 onToken = { _ ->
                     if (_state.value.isThinking) {
                         _state.update { it.copy(isThinking = false) }
@@ -313,7 +338,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
                 is AiResult.Success -> {
                     when (currentMode) {
-                        AiMode.CODE -> applyAiResponse(result.content, tps)
+                        AiMode.CODE -> {
+                            if (currentModelMode == ModelMode.SWARM) {
+                                runSwarmPipeline(service, config, result.content, tps)
+                            } else {
+                                applyAiResponse(result.content, tps)
+                            }
+                        }
                         AiMode.ASK -> _state.update {
                             it.copy(
                                 messages = it.messages + ChatMessage(
@@ -345,6 +376,274 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * SWARM pipeline: Architect (plan) → Coder (generate) → Validator (auto-repair loop).
+     * The initial AI response is treated as the Architect's plan. The Coder then
+     * generates code from that plan. If execution fails, the Validator repairs
+     * automatically up to [AiConfig.maxRepairIterations] times.
+     */
+    private suspend fun runSwarmPipeline(
+        service: AiService,
+        config: com.pocketide.data.ai.AiConfig,
+        architectResponse: String,
+        architectTps: Float?,
+    ) {
+        // Step 1: Display Architect's plan
+        _state.update {
+            it.copy(
+                messages = it.messages + ChatMessage(
+                    role = MessageRole.ARCHITECT,
+                    content = architectResponse,
+                    agentStatus = AgentStatus.DONE,
+                    tokensPerSecond = architectTps,
+                ),
+                architectStatus = AgentStatus.DONE,
+                coderStatus = AgentStatus.GENERATING,
+                isThinking = true,
+            )
+        }
+
+        // Step 2: Coder — generate code using the plan as context
+        val coderUserMessage = buildString {
+            appendLine("Based on this plan, generate the code:")
+            appendLine(architectResponse)
+            appendLine()
+            appendLine("Respond using the PLAN/FILENAME/code block format.")
+        }
+
+        val coderManaged = ContextManager.buildContext(
+            systemPrompt = CODE_MODE_PROMPT,
+            history = emptyList(),
+            userMessage = coderUserMessage,
+            files = _state.value.files,
+            contextWindowSize = config.contextWindowSize,
+            activeFileIndex = _state.value.activeFileIndex,
+            enableCodeContext = config.enableCodeContext,
+            enableHistorySummary = config.enableHistorySummary,
+        )
+
+        val coderStart = System.currentTimeMillis()
+        var coderTokens = 0
+        val coderResult = service.chatCompletion(
+            systemPrompt = coderManaged.systemPrompt,
+            history = coderManaged.history,
+            userMessage = coderManaged.userMessage,
+            onToken = { _ ->
+                if (_state.value.isThinking) {
+                    _state.update { it.copy(isThinking = false) }
+                }
+                coderTokens++
+            },
+        )
+        val coderTps = ((System.currentTimeMillis() - coderStart) / 1000f).let { el ->
+            if (el > 0f) coderTokens / el else null
+        }
+
+        when (coderResult) {
+            is AiResult.Error -> {
+                _state.update {
+                    it.copy(
+                        messages = it.messages + ChatMessage(
+                            role = MessageRole.SYSTEM,
+                            content = "Coder error: ${coderResult.message}",
+                            agentStatus = AgentStatus.ERROR,
+                        ),
+                        coderStatus = AgentStatus.ERROR,
+                        isGenerating = false,
+                        isThinking = false,
+                    )
+                }
+                return
+            }
+            is AiResult.Success -> {
+                applyAiResponse(coderResult.content, coderTps)
+            }
+        }
+
+        // Step 3: Auto-execute and Validator repair loop
+        val s = _state.value
+        val activeFile = s.files.getOrNull(s.activeFileIndex)
+        if (activeFile == null) return
+
+        val execResult = codeExecutor.execute(activeFile.content, activeFile.language)
+        _state.update {
+            it.copy(
+                executionStatus = execResult.status,
+                stdout = execResult.stdout,
+                stderr = execResult.stderr,
+                warnings = execResult.warnings,
+                errorLine = execResult.errorLine,
+                errorColumn = execResult.errorColumn,
+                errorType = execResult.errorType,
+                executionDurationMs = execResult.durationMs,
+                terminalExpanded = true,
+            )
+        }
+
+        if (execResult.status == ExecutionStatus.PASSED) {
+            _state.update {
+                it.copy(
+                    isGenerating = false,
+                    isThinking = false,
+                    coderStatus = AgentStatus.DONE,
+                    validatorStatus = AgentStatus.DONE,
+                )
+            }
+            return
+        }
+
+        // Step 4: Validator — autonomous repair loop
+        runAutonomousRepair(service, config, activeFile, maxIterations = config.maxRepairIterations)
+    }
+
+    /**
+     * Autonomous repair loop: sends error context back to the AI, re-applies
+     * the fixed code, and re-executes. Repeats up to [maxIterations] times
+     * or until the code executes successfully.
+     */
+    private suspend fun runAutonomousRepair(
+        service: AiService,
+        config: com.pocketide.data.ai.AiConfig,
+        initialFile: CodeFile,
+        maxIterations: Int,
+    ) {
+        var currentFile = initialFile
+        var currentStderr = _state.value.stderr
+        var currentErrorLine = _state.value.errorLine
+        var currentErrorColumn = _state.value.errorColumn
+        var currentErrorType = _state.value.errorType
+        var currentWarnings = _state.value.warnings
+        var currentDuration = _state.value.executionDurationMs
+
+        for (iteration in 1..maxIterations) {
+            _state.update {
+                it.copy(
+                    validatorStatus = AgentStatus.GENERATING,
+                    isThinking = true,
+                    isGenerating = true,
+                )
+            }
+
+            val repairPrompt = buildString {
+                appendLine("The following ${currentFile.language.displayName} code failed (repair attempt $iteration/$maxIterations):")
+                appendLine("Error type: ${currentErrorType ?: "Unknown"}")
+                if (currentErrorLine != null) {
+                    appendLine("Error at line: $currentErrorLine${if (currentErrorColumn != null) ", column: $currentErrorColumn" else ""}")
+                }
+                if (currentWarnings.isNotBlank()) {
+                    appendLine("Warnings: $currentWarnings")
+                }
+                appendLine("Error message: $currentStderr")
+                appendLine("Execution time: ${currentDuration}ms")
+                appendLine()
+                appendLine("Code:")
+                appendLine(currentFile.content)
+                appendLine()
+                appendLine("Fix the code. Respond using the same PLAN/FILENAME/code block format.")
+            }
+
+            val repairManaged = ContextManager.buildContext(
+                systemPrompt = CODE_MODE_PROMPT,
+                history = emptyList(),
+                userMessage = repairPrompt,
+                files = _state.value.files,
+                contextWindowSize = config.contextWindowSize,
+                activeFileIndex = _state.value.activeFileIndex,
+                enableCodeContext = config.enableCodeContext,
+                enableHistorySummary = config.enableHistorySummary,
+            )
+
+            val repairResult = service.chatCompletion(
+                systemPrompt = repairManaged.systemPrompt,
+                history = repairManaged.history,
+                userMessage = repairManaged.userMessage,
+                onToken = { _ ->
+                    if (_state.value.isThinking) {
+                        _state.update { it.copy(isThinking = false) }
+                    }
+                },
+            )
+
+            when (repairResult) {
+                is AiResult.Error -> {
+                    _state.update {
+                        it.copy(
+                            messages = it.messages + ChatMessage(
+                                role = MessageRole.SYSTEM,
+                                content = "Repair attempt $iteration failed: ${repairResult.message}",
+                                agentStatus = AgentStatus.ERROR,
+                            ),
+                            validatorStatus = AgentStatus.ERROR,
+                            isGenerating = false,
+                            isThinking = false,
+                        )
+                    }
+                    return
+                }
+                is AiResult.Success -> {
+                    applyAiResponse(repairResult.content, null)
+                }
+            }
+
+            // Re-execute the repaired code
+            val s = _state.value
+            val repairedFile = s.files.getOrNull(s.activeFileIndex) ?: return
+            currentFile = repairedFile
+
+            val execResult = codeExecutor.execute(repairedFile.content, repairedFile.language)
+            _state.update {
+                it.copy(
+                    executionStatus = execResult.status,
+                    stdout = execResult.stdout,
+                    stderr = execResult.stderr,
+                    warnings = execResult.warnings,
+                    errorLine = execResult.errorLine,
+                    errorColumn = execResult.errorColumn,
+                    errorType = execResult.errorType,
+                    executionDurationMs = execResult.durationMs,
+                )
+            }
+
+            if (execResult.status == ExecutionStatus.PASSED) {
+                _state.update {
+                    it.copy(
+                        messages = it.messages + ChatMessage(
+                            role = MessageRole.VALIDATOR,
+                            content = "Code repaired successfully after $iteration attempt(s).",
+                            agentStatus = AgentStatus.DONE,
+                        ),
+                        validatorStatus = AgentStatus.DONE,
+                        isGenerating = false,
+                        isThinking = false,
+                    )
+                }
+                return
+            }
+
+            // Update error context for next iteration
+            currentStderr = execResult.stderr
+            currentErrorLine = execResult.errorLine
+            currentErrorColumn = execResult.errorColumn
+            currentErrorType = execResult.errorType
+            currentWarnings = execResult.warnings
+            currentDuration = execResult.durationMs
+        }
+
+        // Max iterations reached — show best attempt
+        _state.update {
+            it.copy(
+                messages = it.messages + ChatMessage(
+                    role = MessageRole.VALIDATOR,
+                    content = "Could not fully repair after $maxIterations attempts. Last error: $currentStderr",
+                    agentStatus = AgentStatus.ERROR,
+                ),
+                validatorStatus = AgentStatus.ERROR,
+                isGenerating = false,
+                isThinking = false,
+            )
         }
     }
 
@@ -577,54 +876,15 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             it.copy(
                 validatorStatus = AgentStatus.GENERATING,
                 executionStatus = ExecutionStatus.IDLE,
+                isGenerating = true,
+                isThinking = true,
             )
         }
 
         viewModelScope.launch {
             val config = aiConfigRepository.load()
-            val service = AiService(executorchRunner, llamaCppRunner, config)
-            val repairPrompt = buildString {
-                appendLine("The following ${activeFile.language.displayName} code failed with this error:")
-                appendLine("Error type: ${s.errorType ?: "Unknown"}")
-                if (s.errorLine != null) {
-                    appendLine("Error at line: ${s.errorLine}${if (s.errorColumn != null) ", column: ${s.errorColumn}" else ""}")
-                }
-                if (s.warnings.isNotBlank()) {
-                    appendLine("Warnings: ${s.warnings}")
-                }
-                appendLine("Error message: ${s.stderr}")
-                appendLine("Execution time: ${s.executionDurationMs}ms")
-                appendLine()
-                appendLine("Code:")
-                appendLine(activeFile.content)
-                appendLine()
-                appendLine("Fix the code. Respond using the same PLAN/FILENAME/code block format.")
-            }
-
-            val result = service.chatCompletion(
-                systemPrompt = CODE_MODE_PROMPT,
-                history = emptyList(),
-                userMessage = repairPrompt,
-            )
-
-            when (result) {
-                is AiResult.Error -> _state.update {
-                    it.copy(
-                        validatorStatus = AgentStatus.ERROR,
-                        messages = it.messages + ChatMessage(
-                            role = MessageRole.SYSTEM,
-                            content = "Repair failed: ${result.message}",
-                            agentStatus = AgentStatus.ERROR,
-                        ),
-                    )
-                }
-
-                is AiResult.Success -> {
-                    applyAiResponse(result.content)
-                    _state.update { it.copy(validatorStatus = AgentStatus.DONE) }
-                    runCode()
-                }
-            }
+            val service = getService(config)
+            runAutonomousRepair(service, config, activeFile, maxIterations = config.maxRepairIterations)
         }
     }
 }
@@ -684,15 +944,39 @@ private const val ASK_MODE_PROMPT = """You are a knowledgeable assistant inside 
 The user is in ASK mode — they want explanations, not file modifications.
 Answer questions about code, explain concepts, review snippets, and provide guidance.
 Do NOT write code blocks or attempt to create files. Respond in plain text.
-If the user asks you to write code, suggest they switch to CODE mode."""
+If the user asks you to write code, suggest they switch to CODE mode.
+
+SUPPORTED LANGUAGES: python, javascript, typescript, lua, sql, java, shell.
+HARDWARE BRIDGE — available in javascript, lua, java via a global `hardware` object:
+  hardware.toast(msg), hardware.vibrate(ms), hardware.setFlashlight(bool),
+  hardware.batteryLevel(), hardware.isCharging(), hardware.clipboardGet/Set(),
+  hardware.screenInfo(), hardware.networkType(), hardware.isOnline(),
+  hardware.storageFree/Total(), hardware.readSensor(type, ms),
+  hardware.getDeviceInfo(), hardware.openUrl(url)
+
+When explaining code, consider the ES5 JavaScript constraints (var, no arrow functions,
+no template literals) and Python transpilation limits described in CODE mode."""
 
 private const val PLAN_MODE_PROMPT = """You are a planning assistant inside PocketIDE, an on-device Android IDE.
 The user is in PLAN mode — they want a detailed plan before any code is written.
 Analyze the request and respond with a structured implementation plan:
 
 1. Break down the task into steps
-2. List files that need to be created or modified
+2. List files that need to be created or modified (with filenames and extensions)
 3. Describe the approach for each file
 4. Note any potential issues or edge cases
+5. Consider which language is best for each file
+
+SUPPORTED LANGUAGES: python, javascript, typescript, lua, sql, java, shell.
+HARDWARE BRIDGE — available in javascript, lua, java via a global `hardware` object:
+  hardware.toast(msg), hardware.vibrate(ms), hardware.setFlashlight(bool),
+  hardware.batteryLevel(), hardware.isCharging(), hardware.clipboardGet/Set(),
+  hardware.screenInfo(), hardware.networkType(), hardware.isOnline(),
+  hardware.storageFree/Total(), hardware.readSensor(type, ms),
+  hardware.getDeviceInfo(), hardware.openUrl(url)
+
+When planning, consider the ES5 JavaScript constraints (var, no arrow functions,
+no template literals) and Python transpilation limits. Plan code that will actually
+run on-device in the PocketIDE sandbox.
 
 Do NOT write code blocks. The user will switch to CODE mode to implement the plan."""

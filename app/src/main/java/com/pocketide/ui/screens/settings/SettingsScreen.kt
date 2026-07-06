@@ -28,10 +28,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.ModelTraining
 import androidx.compose.material.icons.filled.Recommend
@@ -298,6 +300,86 @@ private fun SettingsContent(
             value = aiConfig.maxRepairIterations,
             range = 1..10,
             onValueChange = { value -> onPersist { it.copy(maxRepairIterations = value) } },
+        )
+    }
+
+    // Context Window
+    SectionHeader("Context Window")
+    SettingsGroup {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Context window size",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = if (aiConfig.contextWindowSize >= 1000) {
+                    "${aiConfig.contextWindowSize / 1000}K tokens"
+                } else {
+                    "${aiConfig.contextWindowSize} tokens"
+                },
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                ),
+            )
+        }
+        Text(
+            text = "Match this to your model's context length. Higher values allow more conversation history and code context but use more memory.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        val contextSteps = listOf(2048, 4096, 8192, 16384, 32768, 65536, 131072)
+        val contextIndex = contextSteps.indexOf(aiConfig.contextWindowSize).coerceAtLeast(0)
+        Slider(
+            value = contextIndex.toFloat(),
+            onValueChange = { idx ->
+                val clamped = idx.toInt().coerceIn(0, contextSteps.size - 1)
+                onPersist { it.copy(contextWindowSize = contextSteps[clamped]) }
+            },
+            valueRange = 0f..(contextSteps.size - 1).toFloat(),
+            steps = contextSteps.size - 2,
+            modifier = Modifier.height(32.dp),
+            colors = SliderDefaults.colors(
+                thumbColor = MaterialTheme.colorScheme.primary,
+                activeTrackColor = MaterialTheme.colorScheme.primary,
+                inactiveTrackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+            ),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            contextSteps.forEach { step ->
+                Text(
+                    text = if (step >= 1000) "${step / 1000}K" else "${step}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (step == aiConfig.contextWindowSize) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (step == aiConfig.contextWindowSize) FontWeight.SemiBold else FontWeight.Normal,
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        IconToggleRow(
+            icon = Icons.Filled.Code,
+            title = "Inject code context",
+            subtitle = "Include snippets of open files in AI prompts for multi-file awareness",
+            checked = aiConfig.enableCodeContext,
+            onCheckedChange = { v -> onPersist { it.copy(enableCodeContext = v) } },
+        )
+
+        IconToggleRow(
+            icon = Icons.Filled.History,
+            title = "Summarize old history",
+            subtitle = "Compress older conversation messages into summaries to save context space",
+            checked = aiConfig.enableHistorySummary,
+            onCheckedChange = { v -> onPersist { it.copy(enableHistorySummary = v) } },
         )
     }
 

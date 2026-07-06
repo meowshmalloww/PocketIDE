@@ -14,6 +14,9 @@ private const val KEY_POWER_SAVING = "ai_power_saving"
 private const val KEY_THERMAL_AWARE = "ai_thermal_aware"
 private const val KEY_ADAPTIVE_CORES = "ai_adaptive_cores"
 private const val KEY_MAX_REPAIR = "ai_max_repair"
+private const val KEY_CONTEXT_WINDOW = "ai_context_window"
+private const val KEY_ENABLE_CODE_CONTEXT = "ai_enable_code_context"
+private const val KEY_ENABLE_HISTORY_SUMMARY = "ai_enable_history_summary"
 
 class AiConfigRepository(context: Context) {
 
@@ -34,6 +37,9 @@ class AiConfigRepository(context: Context) {
             thermalAware = prefs.getBoolean(KEY_THERMAL_AWARE, default.thermalAware),
             adaptiveCores = prefs.getBoolean(KEY_ADAPTIVE_CORES, default.adaptiveCores),
             maxRepairIterations = prefs.getInt(KEY_MAX_REPAIR, default.maxRepairIterations),
+            contextWindowSize = prefs.getInt(KEY_CONTEXT_WINDOW, default.contextWindowSize),
+            enableCodeContext = prefs.getBoolean(KEY_ENABLE_CODE_CONTEXT, default.enableCodeContext),
+            enableHistorySummary = prefs.getBoolean(KEY_ENABLE_HISTORY_SUMMARY, default.enableHistorySummary),
         )
     }
 
@@ -49,6 +55,9 @@ class AiConfigRepository(context: Context) {
             putBoolean(KEY_THERMAL_AWARE, config.thermalAware)
             putBoolean(KEY_ADAPTIVE_CORES, config.adaptiveCores)
             putInt(KEY_MAX_REPAIR, config.maxRepairIterations)
+            putInt(KEY_CONTEXT_WINDOW, config.contextWindowSize)
+            putBoolean(KEY_ENABLE_CODE_CONTEXT, config.enableCodeContext)
+            putBoolean(KEY_ENABLE_HISTORY_SUMMARY, config.enableHistorySummary)
         }
     }
 }
