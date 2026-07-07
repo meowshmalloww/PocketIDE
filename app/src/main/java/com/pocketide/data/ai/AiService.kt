@@ -1,10 +1,14 @@
 package com.pocketide.data.ai
 
 import android.content.Context
-import android.os.BatteryManager
 
 sealed class AiResult {
-    data class Success(val content: String, val statsJson: String? = null) : AiResult()
+    data class Success(
+        val content: String,
+        val statsJson: String? = null,
+        val benchmark: InferenceBenchmark.BenchmarkResult? = null,
+        val tuning: InferenceTuning? = null,
+    ) : AiResult()
     data class Error(val message: String) : AiResult()
 }
 
@@ -18,12 +22,12 @@ data class ChatTurn(val role: String, val content: String)
  *
  * No network calls — fully offline.
  *
- * Optimization settings (powerSaving, thermalAware, adaptiveCores) are applied
- * to adjust the generation sequence length at runtime:
- * - **powerSaving**: Halves maxSeqLen to reduce compute and battery drain.
- * - **thermalAware**: Reads battery temperature; reduces maxSeqLen when device is hot.
- * - **adaptiveCores**: Uses [Runtime.availableProcessors] to scale maxSeqLen —
- *   more cores allow full-length generation, fewer cores trigger a reduction.
+ * Optimization pipeline:
+ * 1. [AdaptiveInferenceTuner] reads thermal state, battery, memory, and CPU cores
+ *    to produce an [InferenceTuning] that adjusts seqLen and thread count.
+ * 2. [KvCacheManager] checks whether the KV cache will fit in available heap memory,
+ *    reducing seqLen or triggering a context reset if needed.
+ * 3. [InferenceBenchmark] measures TTFT, tokens/sec, and memory delta in real time.
  */
 class AiService(
     private val executorchRunner: ExecutorchLlmRunner,
@@ -31,6 +35,9 @@ class AiService(
     private val config: AiConfig,
     private val context: Context? = null,
 ) {
+
+    private val benchmark = InferenceBenchmark()
+    private val kvCacheManager = KvCacheManager.forModelSize(0.5e9f)
 
     suspend fun chatCompletion(
         systemPrompt: String,
@@ -73,60 +80,49 @@ class AiService(
             userMessage = userMessage,
         )
 
-        val optimizedSeqLen = applyOptimizations(config.maxSeqLen)
+        // Step 1: Adaptive tuning based on device conditions
+        val tuning = AdaptiveInferenceTuner.tune(config, context)
+        var effectiveSeqLen = tuning.seqLen
+
+        // Step 2: KV cache memory check
+        when (val kvDecision = kvCacheManager.checkMemory(effectiveSeqLen)) {
+            is KvCacheManager.KvCacheDecision.Proceed -> Unit
+            is KvCacheManager.KvCacheDecision.ReduceSeqLen -> {
+                effectiveSeqLen = kvDecision.newSeqLen
+            }
+            is KvCacheManager.KvCacheDecision.ResetContext -> {
+                runner.resetContext()
+                kvCacheManager.reset()
+                effectiveSeqLen = effectiveSeqLen.coerceAtMost(256)
+            }
+        }
+
+        // Step 3: Benchmark measurement
+        benchmark.start()
 
         val sink = LlmRunner.TokenSink { token ->
+            benchmark.onToken()
             onToken?.invoke(token)
         }
 
-        return when (val gen = runner.generate(prompt, optimizedSeqLen, sink)) {
+        val genResult = runner.generate(prompt, effectiveSeqLen, sink)
+        val benchResult = benchmark.finish()
+        kvCacheManager.recordGeneration(benchResult.tokenCount)
+
+        return when (genResult) {
             is LlmRunner.GenerateResult.Success ->
-                AiResult.Success(content = gen.text, statsJson = gen.statsJson)
+                AiResult.Success(
+                    content = genResult.text,
+                    statsJson = genResult.statsJson,
+                    benchmark = benchResult,
+                    tuning = tuning,
+                )
             is LlmRunner.GenerateResult.Error ->
-                AiResult.Error(gen.message)
-        }
-    }
-
-    /**
-     * Applies optimization settings to adjust the generation sequence length.
-     * Returns the adjusted sequence length.
-     */
-    private fun applyOptimizations(baseSeqLen: Int): Int {
-        var seqLen = baseSeqLen
-
-        if (config.powerSaving) {
-            seqLen = (seqLen / 2).coerceAtLeast(128)
-        }
-
-        if (config.thermalAware && context != null) {
-            val batteryTemp = readBatteryTemperature(context)
-            if (batteryTemp > THERMAL_THRESHOLD_CELSIUS) {
-                val reductionFactor = 1f - ((batteryTemp - THERMAL_THRESHOLD_CELSIUS) / 20f).coerceAtMost(0.5f)
-                seqLen = (seqLen * reductionFactor).toInt().coerceAtLeast(64)
-            }
-        }
-
-        if (config.adaptiveCores) {
-            val cores = Runtime.getRuntime().availableProcessors()
-            if (cores <= 4) {
-                seqLen = (seqLen * 0.75f).toInt().coerceAtLeast(64)
-            }
-        }
-
-        return seqLen
-    }
-
-    private fun readBatteryTemperature(ctx: Context): Float {
-        return try {
-            val intent = ctx.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
-            val temp = intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
-            if (temp > 0) temp / 10f else 25f
-        } catch (e: Exception) {
-            25f
+                AiResult.Error(genResult.message)
         }
     }
 
     companion object {
-        private const val THERMAL_THRESHOLD_CELSIUS = 38f
+        private const val TAG = "AiService"
     }
 }

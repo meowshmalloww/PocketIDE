@@ -496,10 +496,22 @@ private fun MessageBubble(
                 )
             }
         }
-        // Tokens per second under assistant messages
+        // Benchmark metrics under assistant messages
         if (!isUser && message.tokensPerSecond != null) {
+            val metrics = buildString {
+                append("%.1f tok/s".format(message.tokensPerSecond))
+                if (message.ttftMs != null && message.ttftMs >= 0) {
+                    append("  TTFT ${message.ttftMs}ms")
+                }
+                if (message.memoryDeltaMb != null) {
+                    append("  mem %+,.1fMB".format(message.memoryDeltaMb))
+                }
+                if (message.strategy != null) {
+                    append("  [${message.strategy}]")
+                }
+            }
             Text(
-                text = "%.1f tok/s".format(message.tokensPerSecond),
+                text = metrics,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                 modifier = Modifier.padding(start = 4.dp, top = 2.dp),

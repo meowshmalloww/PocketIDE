@@ -87,6 +87,9 @@ dependencies {
     // On-device LLM inference — llama.cpp (.gguf models, broad model ecosystem)
     implementation(libs.llamacpp.kotlin)
 
+    // Embedded HTTP server for localhost web testing
+    implementation(libs.nanohttpd)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)

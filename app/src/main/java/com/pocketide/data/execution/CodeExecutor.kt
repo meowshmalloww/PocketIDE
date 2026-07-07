@@ -254,6 +254,111 @@ class CodeExecutor(
                     override fun call(arg: LuaValue): LuaValue =
                         LuaValue.valueOf(bridge.openUrl(arg.tojstring()))
                 })
+                hw.set("toastLong", object : org.luaj.vm2.lib.OneArgFunction() {
+                    override fun call(arg: LuaValue): LuaValue {
+                        bridge.toastLong(arg.tojstring())
+                        return LuaValue.NIL
+                    }
+                })
+                hw.set("vibratePattern", object : org.luaj.vm2.lib.OneArgFunction() {
+                    override fun call(arg: LuaValue): LuaValue {
+                        val table = arg as? LuaTable
+                        val timings = if (table != null) {
+                            LongArray(table.length()) { i -> table.get(i + 1).tolong() }
+                        } else {
+                            longArrayOf(0, 200)
+                        }
+                        bridge.vibratePattern(timings)
+                        return LuaValue.NIL
+                    }
+                })
+                hw.set("batteryTemperature", object : org.luaj.vm2.lib.ZeroArgFunction() {
+                    override fun call(): LuaValue = LuaValue.valueOf(bridge.batteryTemperature().toDouble())
+                })
+                hw.set("setScreenBrightness", object : org.luaj.vm2.lib.OneArgFunction() {
+                    override fun call(arg: LuaValue): LuaValue =
+                        LuaValue.valueOf(bridge.setScreenBrightness(arg.toint()))
+                })
+                hw.set("keepScreenOn", object : org.luaj.vm2.lib.OneArgFunction() {
+                    override fun call(arg: LuaValue): LuaValue {
+                        bridge.keepScreenOn(arg.toboolean())
+                        return LuaValue.NIL
+                    }
+                })
+                hw.set("speak", object : org.luaj.vm2.lib.OneArgFunction() {
+                    override fun call(arg: LuaValue): LuaValue =
+                        LuaValue.valueOf(bridge.speak(arg.tojstring()))
+                })
+                hw.set("stopSpeak", object : org.luaj.vm2.lib.ZeroArgFunction() {
+                    override fun call(): LuaValue {
+                        bridge.stopSpeak()
+                        return LuaValue.NIL
+                    }
+                })
+                hw.set("playTone", object : org.luaj.vm2.lib.VarArgFunction() {
+                    override fun invoke(args: org.luaj.vm2.Varargs): LuaValue {
+                        val freq = if (args.narg() >= 1) args.arg(1).toint() else 440
+                        val duration = if (args.narg() >= 2) args.arg(2).toint() else 200
+                        bridge.playTone(freq, duration)
+                        return LuaValue.NIL
+                    }
+                })
+                hw.set("notify", object : org.luaj.vm2.lib.VarArgFunction() {
+                    override fun invoke(args: org.luaj.vm2.Varargs): LuaValue {
+                        val title = if (args.narg() >= 1) args.arg(1).tojstring() else "PocketIDE"
+                        val text = if (args.narg() >= 2) args.arg(2).tojstring() else ""
+                        return LuaValue.valueOf(bridge.notify(title, text))
+                    }
+                })
+                hw.set("getLocation", object : org.luaj.vm2.lib.VarArgFunction() {
+                    override fun invoke(args: org.luaj.vm2.Varargs): LuaValue {
+                        val timeout = if (args.narg() >= 1) args.arg(1).tolong() else 5000L
+                        return LuaValue.valueOf(bridge.getLocation(timeout))
+                    }
+                })
+                hw.set("listBluetooth", object : org.luaj.vm2.lib.ZeroArgFunction() {
+                    override fun call(): LuaValue = LuaValue.valueOf(bridge.listBluetooth())
+                })
+                hw.set("readFile", object : org.luaj.vm2.lib.OneArgFunction() {
+                    override fun call(arg: LuaValue): LuaValue =
+                        LuaValue.valueOf(bridge.readFile(arg.tojstring()))
+                })
+                hw.set("writeFile", object : org.luaj.vm2.lib.VarArgFunction() {
+                    override fun invoke(args: org.luaj.vm2.Varargs): LuaValue {
+                        val path = args.arg(1).tojstring()
+                        val content = args.arg(2).tojstring()
+                        return LuaValue.valueOf(bridge.writeFile(path, content))
+                    }
+                })
+                hw.set("listFiles", object : org.luaj.vm2.lib.OneArgFunction() {
+                    override fun call(arg: LuaValue): LuaValue =
+                        LuaValue.valueOf(bridge.listFiles(arg.tojstring()))
+                })
+                hw.set("deleteFile", object : org.luaj.vm2.lib.OneArgFunction() {
+                    override fun call(arg: LuaValue): LuaValue =
+                        LuaValue.valueOf(bridge.deleteFile(arg.tojstring()))
+                })
+                hw.set("sandboxPath", object : org.luaj.vm2.lib.ZeroArgFunction() {
+                    override fun call(): LuaValue = LuaValue.valueOf(bridge.sandboxPath())
+                })
+                hw.set("startServer", object : org.luaj.vm2.lib.VarArgFunction() {
+                    override fun invoke(args: org.luaj.vm2.Varargs): LuaValue {
+                        val port = if (args.narg() >= 1) args.arg(1).toint() else 8080
+                        return LuaValue.valueOf(bridge.startServer(port))
+                    }
+                })
+                hw.set("stopServer", object : org.luaj.vm2.lib.ZeroArgFunction() {
+                    override fun call(): LuaValue {
+                        bridge.stopServer()
+                        return LuaValue.NIL
+                    }
+                })
+                hw.set("isServerRunning", object : org.luaj.vm2.lib.ZeroArgFunction() {
+                    override fun call(): LuaValue = LuaValue.valueOf(bridge.isServerRunning())
+                })
+                hw.set("listCameras", object : org.luaj.vm2.lib.ZeroArgFunction() {
+                    override fun call(): LuaValue = LuaValue.valueOf(bridge.listCameras())
+                })
                 globals.set("hardware", hw)
             }
 

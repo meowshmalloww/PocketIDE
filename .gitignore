@@ -14,10 +14,12 @@
 .cxx
 local.properties
 screen*.png
-docs/
 .devin/
 .windsurf/
 .windsurfrules
+
+# APK files — too large for git (use GitHub Releases instead)
+*.apk
 
 # Local AI model files (.pte, .gguf) — too large for git
 models/*

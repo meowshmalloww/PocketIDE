@@ -59,6 +59,9 @@ data class EditorUiState(
     val modelMode: ModelMode = ModelMode.SINGLE,
     val isThinking: Boolean = false,
     val lastTokensPerSecond: Float? = null,
+    val lastTtftMs: Long? = null,
+    val lastMemoryDeltaMb: Float? = null,
+    val lastStrategy: String? = null,
 )
 
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
@@ -239,6 +242,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 isGenerating = false,
                 isThinking = false,
                 lastTokensPerSecond = null,
+                lastTtftMs = null,
+                lastMemoryDeltaMb = null,
+                lastStrategy = null,
                 architectStatus = AgentStatus.IDLE,
                 coderStatus = AgentStatus.IDLE,
                 validatorStatus = AgentStatus.IDLE,
@@ -321,6 +327,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
             val elapsedSec = (System.currentTimeMillis() - startTime) / 1000f
             val tps = if (elapsedSec > 0f) tokenCount / elapsedSec else null
+            val benchTtft = (result as? AiResult.Success)?.benchmark?.ttftMs?.takeIf { it >= 0 }
+            val benchMemDelta = (result as? AiResult.Success)?.benchmark?.let {
+                (it.memoryDeltaBytes / (1024f * 1024f))
+            }
+            val benchStrategy = (result as? AiResult.Success)?.tuning?.strategy?.displayName
 
             when (result) {
                 is AiResult.Error -> _state.update {
@@ -352,11 +363,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                                     content = result.content,
                                     agentStatus = AgentStatus.DONE,
                                     tokensPerSecond = tps,
+                                    ttftMs = benchTtft,
+                                    memoryDeltaMb = benchMemDelta,
+                                    strategy = benchStrategy,
                                 ),
                                 architectStatus = AgentStatus.DONE,
                                 isGenerating = false,
                                 isThinking = false,
                                 lastTokensPerSecond = tps,
+                                lastTtftMs = benchTtft,
+                                lastMemoryDeltaMb = benchMemDelta,
+                                lastStrategy = benchStrategy,
                             )
                         }
                         AiMode.PLAN -> _state.update {
@@ -366,11 +383,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                                     content = result.content,
                                     agentStatus = AgentStatus.DONE,
                                     tokensPerSecond = tps,
+                                    ttftMs = benchTtft,
+                                    memoryDeltaMb = benchMemDelta,
+                                    strategy = benchStrategy,
                                 ),
                                 architectStatus = AgentStatus.DONE,
                                 isGenerating = false,
                                 isThinking = false,
                                 lastTokensPerSecond = tps,
+                                lastTtftMs = benchTtft,
+                                lastMemoryDeltaMb = benchMemDelta,
+                                lastStrategy = benchStrategy,
                             )
                         }
                     }
@@ -904,24 +927,46 @@ Only include ONE code block. Keep the plan to a single line. Do not add commenta
 SUPPORTED LANGUAGES (pick the best fit): python, javascript, typescript, lua, sql, java, shell.
 
 HARDWARE BRIDGE — available in javascript, lua, java via a global `hardware` object:
-  hardware.toast(msg)             show a short toast
-  hardware.toastLong(msg)         show a long toast
-  hardware.vibrate(ms)            vibrate for N milliseconds (default 200)
-  hardware.setFlashlight(bool)    turn torch on/off, returns true on success
-  hardware.batteryLevel()         battery percent 0..100, or -1
-  hardware.isCharging()           true if charging
-  hardware.clipboardGet()         read clipboard text
-  hardware.clipboardSet(text)     write clipboard
-  hardware.screenInfo()           "WxH, density"
-  hardware.networkType()          "wifi" | "cellular" | "ethernet" | "none"
-  hardware.isOnline()             boolean
-  hardware.storageFree()          free bytes
-  hardware.storageTotal()         total bytes
-  hardware.readSensor(type, ms)   type: accelerometer|gyroscope|light|pressure|proximity|magnetic
-  hardware.getDeviceInfo()        multi-line device summary
-  hardware.openUrl(url)           opens in the default browser
+  hardware.toast(msg)               show a short toast
+  hardware.toastLong(msg)           show a long toast
+  hardware.vibrate(ms)              vibrate for N milliseconds
+  hardware.vibratePattern(timings)  vibrate a waveform pattern [0,200,100,400]
+  hardware.setFlashlight(bool)      turn torch on/off, returns true on success
+  hardware.batteryLevel()           battery percent 0..100, or -1
+  hardware.batteryTemperature()     battery temp in Celsius (default 25)
+  hardware.isCharging()             true if charging
+  hardware.clipboardGet()           read clipboard text
+  hardware.clipboardSet(text)       write clipboard
+  hardware.screenInfo()             "WxH, density"
+  hardware.screenBrightness()       current brightness 0..255
+  hardware.setScreenBrightness(n)   set brightness 0..255 (needs WRITE_SETTINGS)
+  hardware.keepScreenOn(bool)       keep screen on or allow it to sleep
+  hardware.networkType()            "wifi"|"cellular"|"ethernet"|"none"
+  hardware.isOnline()               boolean
+  hardware.storageFree()            free bytes
+  hardware.storageTotal()           total bytes
+  hardware.readSensor(type, ms)     type: accelerometer|gyroscope|light|pressure|proximity|magnetic
+  hardware.listSensors()            list available sensor types
+  hardware.getDeviceInfo()          multi-line device summary
+  hardware.openUrl(url)             opens in the default browser
+  hardware.speak(text)              text-to-speech, returns true on success
+  hardware.stopSpeak()              stop ongoing TTS
+  hardware.playTone(freqHz, ms)     play a beep tone (e.g. 440Hz, 200ms)
+  hardware.notify(title, text)      show a system notification
+  hardware.getLocation(timeoutMs)   one-shot GPS: "lat,lng,accuracy=m" (default 5000ms)
+  hardware.listBluetooth()          list paired BT devices: "name|address" per line
+  hardware.listCameras()            list camera IDs with facing, flash, resolutions
+  hardware.readFile(path)           read file from app sandbox
+  hardware.writeFile(path, text)    write file to app sandbox
+  hardware.listFiles(path)          list files in sandbox directory
+  hardware.deleteFile(path)         delete file from sandbox
+  hardware.sandboxPath()            get sandbox root path
+  hardware.startServer(port)        start localhost HTTP server (default 8080)
+  hardware.stopServer()             stop the HTTP server
+  hardware.isServerRunning()        check if server is active
 
-Use `hardware` freely when the user asks for anything device-related (flashlight, vibrate, battery, sensors, etc.).
+Use `hardware` freely when the user asks for anything device-related (flashlight, vibrate, battery,
+sensors, TTS, GPS, bluetooth, camera, file I/O, HTTP server, notifications, screen control, audio).
 
 JAVASCRIPT / TYPESCRIPT RULES — the runtime is Mozilla Rhino (ES5 only). ALWAYS:
 - Use var (never let/const)
@@ -948,11 +993,11 @@ If the user asks you to write code, suggest they switch to CODE mode.
 
 SUPPORTED LANGUAGES: python, javascript, typescript, lua, sql, java, shell.
 HARDWARE BRIDGE — available in javascript, lua, java via a global `hardware` object:
-  hardware.toast(msg), hardware.vibrate(ms), hardware.setFlashlight(bool),
-  hardware.batteryLevel(), hardware.isCharging(), hardware.clipboardGet/Set(),
-  hardware.screenInfo(), hardware.networkType(), hardware.isOnline(),
-  hardware.storageFree/Total(), hardware.readSensor(type, ms),
-  hardware.getDeviceInfo(), hardware.openUrl(url)
+  toast/toastLong, vibrate/vibratePattern, setFlashlight, batteryLevel/batteryTemperature,
+  isCharging, clipboardGet/Set, screenInfo/screenBrightness/setScreenBrightness/keepScreenOn,
+  networkType/isOnline, storageFree/Total, readSensor/listSensors, getDeviceInfo, openUrl,
+  speak/stopSpeak, playTone, notify, getLocation, listBluetooth, listCameras,
+  readFile/writeFile/listFiles/deleteFile/sandboxPath, startServer/stopServer/isServerRunning
 
 When explaining code, consider the ES5 JavaScript constraints (var, no arrow functions,
 no template literals) and Python transpilation limits described in CODE mode."""
@@ -969,11 +1014,11 @@ Analyze the request and respond with a structured implementation plan:
 
 SUPPORTED LANGUAGES: python, javascript, typescript, lua, sql, java, shell.
 HARDWARE BRIDGE — available in javascript, lua, java via a global `hardware` object:
-  hardware.toast(msg), hardware.vibrate(ms), hardware.setFlashlight(bool),
-  hardware.batteryLevel(), hardware.isCharging(), hardware.clipboardGet/Set(),
-  hardware.screenInfo(), hardware.networkType(), hardware.isOnline(),
-  hardware.storageFree/Total(), hardware.readSensor(type, ms),
-  hardware.getDeviceInfo(), hardware.openUrl(url)
+  toast/toastLong, vibrate/vibratePattern, setFlashlight, batteryLevel/batteryTemperature,
+  isCharging, clipboardGet/Set, screenInfo/screenBrightness/setScreenBrightness/keepScreenOn,
+  networkType/isOnline, storageFree/Total, readSensor/listSensors, getDeviceInfo, openUrl,
+  speak/stopSpeak, playTone, notify, getLocation, listBluetooth, listCameras,
+  readFile/writeFile/listFiles/deleteFile/sandboxPath, startServer/stopServer/isServerRunning
 
 When planning, consider the ES5 JavaScript constraints (var, no arrow functions,
 no template literals) and Python transpilation limits. Plan code that will actually
@@ -992,11 +1037,11 @@ Your role is to analyze the user's request and produce a concise implementation 
 
 SUPPORTED LANGUAGES: python, javascript, typescript, lua, sql, java, shell.
 HARDWARE BRIDGE — available in javascript, lua, java via a global `hardware` object:
-  hardware.toast(msg), hardware.vibrate(ms), hardware.setFlashlight(bool),
-  hardware.batteryLevel(), hardware.isCharging(), hardware.clipboardGet/Set(),
-  hardware.screenInfo(), hardware.networkType(), hardware.isOnline(),
-  hardware.storageFree/Total(), hardware.readSensor(type, ms),
-  hardware.getDeviceInfo(), hardware.openUrl(url)
+  toast/toastLong, vibrate/vibratePattern, setFlashlight, batteryLevel/batteryTemperature,
+  isCharging, clipboardGet/Set, screenInfo/screenBrightness/setScreenBrightness/keepScreenOn,
+  networkType/isOnline, storageFree/Total, readSensor/listSensors, getDeviceInfo, openUrl,
+  speak/stopSpeak, playTone, notify, getLocation, listBluetooth, listCameras,
+  readFile/writeFile/listFiles/deleteFile/sandboxPath, startServer/stopServer/isServerRunning
 
 Output ONLY the plan in plain text. Do NOT write code blocks.
 The Coder agent will implement based on your plan."""
@@ -1029,7 +1074,14 @@ PYTHON is transpiled to ES5 JavaScript — use print(), input(), and standard ty
 TYPESCRIPT is transpiled to ES5 JavaScript — use typed syntax, it will be stripped.
 LUA runs via luaj. SQL uses an in-memory SQLite database.
 JAVA uses BeanShell (no class boilerplate, use System.out.println).
-SHELL uses POSIX sh."""
+SHELL uses POSIX sh.
+
+HARDWARE BRIDGE — available in javascript, lua, java via a global `hardware` object:
+  toast/toastLong, vibrate/vibratePattern, setFlashlight, batteryLevel/batteryTemperature,
+  isCharging, clipboardGet/Set, screenInfo/screenBrightness/setScreenBrightness/keepScreenOn,
+  networkType/isOnline, storageFree/Total, readSensor/listSensors, getDeviceInfo, openUrl,
+  speak/stopSpeak, playTone, notify, getLocation, listBluetooth, listCameras,
+  readFile/writeFile/listFiles/deleteFile/sandboxPath, startServer/stopServer/isServerRunning"""
 
 private const val VALIDATOR_SYSTEM_PROMPT = """You are the Validator agent in PocketIDE's SWARM pipeline.
 Your role is to fix code that failed execution. You receive the error output and the failing code.

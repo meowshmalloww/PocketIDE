@@ -17,4 +17,7 @@ data class ChatMessage(
     val agentStatus: AgentStatus? = null,
     val tokensPerSecond: Float? = null,
     val isThinking: Boolean = false,
+    val ttftMs: Long? = null,
+    val memoryDeltaMb: Float? = null,
+    val strategy: String? = null,
 )
