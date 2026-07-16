@@ -21,6 +21,7 @@ object PromptFormatter {
         history: List<ChatTurn>,
         userMessage: String,
     ): String = when (template) {
+        PromptTemplate.AUTO -> error("AUTO prompt template must be resolved before formatting")
         PromptTemplate.LLAMA3 -> formatLlama3(systemPrompt, history, userMessage)
         PromptTemplate.QWEN -> formatQwen(systemPrompt, history, userMessage)
         PromptTemplate.PLAIN -> formatPlain(systemPrompt, history, userMessage)

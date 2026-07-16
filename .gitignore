@@ -24,3 +24,11 @@ screen*.png
 # Local AI model files (.pte, .gguf) — too large for git
 models/*
 !models/.gitkeep
+*.gguf
+*.pte
+
+# Local Kotlin/Gradle compiler state
+.kotlin/
+
+# Planning docs — not for public repo
+docs/

@@ -16,6 +16,13 @@ class FileRepository(private val context: Context) {
     private fun projectDir(projectName: String): File =
         File(projectsDir, projectName).apply { mkdirs() }
 
+    fun projectDirectory(projectName: String): File = projectDir(projectName)
+
+    suspend fun saveFiles(projectName: String, files: List<CodeFile>): Unit = withContext(Dispatchers.IO) {
+        val dir = projectDir(projectName)
+        files.forEach { file -> File(dir, file.name).writeText(file.content) }
+    }
+
     suspend fun saveFile(projectName: String, file: CodeFile): Unit = withContext(Dispatchers.IO) {
         val dir = projectDir(projectName)
         val target = File(dir, file.name)

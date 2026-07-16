@@ -9,12 +9,91 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.RuntimeEnvironment
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 class CodeExecutorTest {
 
     private val executor = CodeExecutor()
+
+    @Test
+    fun `all editor-only languages fail with an honest runtime message`() = runBlocking {
+        val editorOnly = listOf(Language.KOTLIN, Language.DART, Language.YAML, Language.MARKDOWN, Language.JSON)
+        editorOnly.forEach { language ->
+            val result = executor.execute("sample", language)
+            assertEquals("${language.displayName} should not claim execution", ExecutionStatus.FAILED, result.status)
+            assertTrue(result.stderr.contains("editor-only"))
+        }
+    }
+
+    @Test
+    fun `preview languages direct users to browser preview`() = runBlocking {
+        listOf(Language.HTML, Language.CSS).forEach { language ->
+            val result = executor.execute("sample", language)
+            assertEquals(ExecutionStatus.FAILED, result.status)
+            assertTrue(result.stderr.contains("browser preview"))
+        }
+    }
+
+    @Test
+    fun `typescript compatibility reports syntax errors`() = runBlocking {
+        val result = executor.execute("const value: number = ;", Language.TYPESCRIPT)
+        assertEquals(ExecutionStatus.FAILED, result.status)
+        assertTrue(result.stderr.isNotBlank())
+        assertTrue(result.errorType != null)
+    }
+
+    @Test
+    fun `python runtime reports that Android context is required in host unit tests`() = runBlocking {
+        val result = executor.execute("print(", Language.PYTHON)
+        assertEquals(ExecutionStatus.FAILED, result.status)
+        assertTrue(result.stderr.contains("Android application context"))
+    }
+
+    @Test
+    fun `hardware bridge is injected into javascript`() = runBlocking {
+        val androidExecutor = CodeExecutor(RuntimeEnvironment.getApplication())
+        val result = androidExecutor.execute(
+            "console.log(hardware.sandboxPath());",
+            Language.JAVASCRIPT,
+        )
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertTrue(result.stdout.trim().isNotEmpty())
+    }
+
+    @Test
+    fun `hardware bridge is retained through typescript compatibility`() = runBlocking {
+        val androidExecutor = CodeExecutor(RuntimeEnvironment.getApplication())
+        val result = androidExecutor.execute(
+            "const path: string = hardware.sandboxPath(); console.log(path);",
+            Language.TYPESCRIPT,
+        )
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertTrue(result.stdout.trim().isNotEmpty())
+    }
+
+    @Test
+    fun `hardware bridge is injected into lua`() = runBlocking {
+        val androidExecutor = CodeExecutor(RuntimeEnvironment.getApplication())
+        val result = androidExecutor.execute(
+            "print(#hardware.sandboxPath() > 0, type(hardware.setFlashlight), type(hardware.getDeviceInfo))",
+            Language.LUA,
+        )
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertEquals("true\tfunction\tfunction", result.stdout.trim())
+    }
+
+    @Test
+    fun `hardware bridge is injected into java compatibility`() = runBlocking {
+        val androidExecutor = CodeExecutor(RuntimeEnvironment.getApplication())
+        val result = androidExecutor.execute(
+            "System.out.println(hardware.sandboxPath().length() > 0);",
+            Language.JAVA,
+        )
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertEquals("true", result.stdout.trim())
+    }
 
     @Test
     fun `executes simple console log`() = runBlocking {
@@ -113,11 +192,11 @@ class CodeExecutorTest {
     }
 
     @Test
-    fun `python executes simple print`() = runBlocking {
+    fun `python without Android context fails honestly`() = runBlocking {
         val result = executor.execute("print('hello')", Language.PYTHON)
 
-        assertEquals(ExecutionStatus.PASSED, result.status)
-        assertTrue(result.stdout.contains("hello"))
+        assertEquals(ExecutionStatus.FAILED, result.status)
+        assertTrue(result.stderr.contains("Android application context"))
     }
 
     @Test
@@ -133,7 +212,7 @@ class CodeExecutorTest {
         val result = executor.execute("fun main() {}", Language.KOTLIN)
 
         assertEquals(ExecutionStatus.FAILED, result.status)
-        assertTrue(result.stderr.contains("not yet supported"))
+        assertTrue(result.stderr.contains("editor-only"))
     }
 
     @Test

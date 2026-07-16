@@ -47,6 +47,7 @@ class ExecutorchLlmRunner(
         modelPath: String,
         tokenizerPath: String,
         temperature: Float,
+        options: LlmRunner.LoadOptions,
     ): LlmRunner.LoadResult = withContext(dispatcher) {
         mutex.withLock {
             if (moduleMatches(modelPath, tokenizerPath, temperature)) {
@@ -97,6 +98,7 @@ class ExecutorchLlmRunner(
         prompt: String,
         seqLen: Int,
         sink: LlmRunner.TokenSink,
+        options: LlmRunner.GenerationOptions,
     ): LlmRunner.GenerateResult = withContext(dispatcher) {
         mutex.withLock {
             val currentModule = module
@@ -122,7 +124,7 @@ class ExecutorchLlmRunner(
                         runCatching { currentModule.stop() }
                     }
                     try {
-                        currentModule.generate(prompt, seqLen, callback)
+                        currentModule.generate(prompt, seqLen, callback, false)
                         if (cont.isActive) cont.resume(Unit)
                     } catch (t: Throwable) {
                         errorHolder[0] = t.message ?: t.javaClass.simpleName

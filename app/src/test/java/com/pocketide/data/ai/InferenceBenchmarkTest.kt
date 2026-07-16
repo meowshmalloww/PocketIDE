@@ -6,6 +6,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.json.JSONObject
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -15,7 +18,7 @@ class InferenceBenchmarkTest {
     fun `start and finish with no tokens returns valid result`() {
         val benchmark = InferenceBenchmark()
         benchmark.start()
-        Thread.sleep(10)
+        ShadowSystemClock.advanceBy(Duration.ofMillis(10))
         val result = benchmark.finish()
 
         assertEquals(0, result.tokenCount)
@@ -27,9 +30,9 @@ class InferenceBenchmarkTest {
     fun `onToken increments count and records TTFT`() {
         val benchmark = InferenceBenchmark()
         benchmark.start()
-        Thread.sleep(5)
+        ShadowSystemClock.advanceBy(Duration.ofMillis(5))
         benchmark.onToken()
-        Thread.sleep(5)
+        ShadowSystemClock.advanceBy(Duration.ofMillis(5))
         benchmark.onToken()
         benchmark.onToken()
         val result = benchmark.finish()
@@ -69,9 +72,10 @@ class InferenceBenchmarkTest {
             maxHeapBytes = 8192,
         )
         val json = result.toJson()
+        val parsed = JSONObject(json)
 
-        assertTrue(json.contains("\"ttft_ms\":100"))
-        assertTrue(json.contains("\"tokens\":25"))
-        assertTrue(json.contains("\"tps\":50.0000"))
+        assertEquals(100L, parsed.getLong("ttft_ms"))
+        assertEquals(25, parsed.getInt("tokens"))
+        assertEquals(50.0, parsed.getDouble("tps"), 0.0001)
     }
 }

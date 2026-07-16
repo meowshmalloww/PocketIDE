@@ -4,59 +4,40 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.consumeAsFlow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import org.nehuatl.llamacpp.LlamaHelper
+import org.json.JSONObject
+import org.nehuatl.llamacpp.LlamaContext
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 
-/**
- * Runs GGUF models on-device via llama.cpp (kotlinllamacpp library).
- *
- * This runner handles .gguf model files — the standard format on HuggingFace.
- * Unlike [ExecutorchLlmRunner] which requires .pte files + a separate tokenizer,
- * GGUF files are self-contained (tokenizer embedded in the model file).
- *
- * The kotlinllamacpp API is event-driven via [MutableSharedFlow], so this class
- * bridges that to the synchronous [LlmRunner] interface by collecting events
- * into a channel and awaiting completion.
- *
- * kotlinllamacpp API: https://github.com/ljcamargo/kotlinllamacpp
- */
+/** GGUF runner with explicit llama.cpp context/thread control and native token statistics. */
 class LlamaCppRunner(
     private val context: Context,
     private val dispatcher: CoroutineDispatcher = RunnerDispatcher,
 ) : LlmRunner {
 
     private val mutex = Mutex()
-    private val scope = CoroutineScope(dispatcher + SupervisorJob())
-
-    private val llmFlow = MutableSharedFlow<LlamaHelper.LLMEvent>(
-        replay = 0,
-        extraBufferCapacity = 64,
-        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
-    )
-
-    private var llamaHelper: LlamaHelper? = null
+    private var llamaContext: LlamaContext? = null
     private var loadedModelPath: String? = null
-    private var loadedTemperature: Float = Float.NaN
+    private var loadedTemperature = Float.NaN
+    private var loadedContextLength = 0
+    private var loadedThreadCount = 0
 
     override suspend fun ensureLoaded(
         modelPath: String,
         tokenizerPath: String,
         temperature: Float,
+        options: LlmRunner.LoadOptions,
     ): LlmRunner.LoadResult = withContext(dispatcher) {
         mutex.withLock {
-            if (modelMatches(modelPath, temperature)) {
+            val contextLength = options.contextLength.coerceAtLeast(MIN_CONTEXT_LENGTH)
+            val threads = options.threadCount
+                .takeIf { it > 0 }
+                ?.coerceAtMost(Runtime.getRuntime().availableProcessors())
+                ?: DEFAULT_THREADS.coerceAtMost(Runtime.getRuntime().availableProcessors())
+            if (modelMatches(modelPath, temperature, contextLength, threads)) {
                 return@withLock LlmRunner.LoadResult.Success
             }
 
@@ -66,145 +47,127 @@ class LlamaCppRunner(
             }
 
             releaseLocked()
-
             try {
-                val helper = LlamaHelper(
-                    contentResolver = context.contentResolver,
-                    scope = scope,
-                    sharedFlow = llmFlow,
+                val descriptor = context.contentResolver.openFileDescriptor(Uri.fromFile(modelFile), "r")
+                    ?: return@withLock LlmRunner.LoadResult.Error("Cannot open GGUF model: $modelPath")
+                val fd = descriptor.detachFd()
+                descriptor.close()
+                val nativeContext = LlamaContext(
+                    NEXT_CONTEXT_ID.getAndIncrement(),
+                    mapOf(
+                        "model" to modelPath,
+                        "model_fd" to fd,
+                        "embedding" to false,
+                        "n_ctx" to contextLength,
+                        "n_batch" to contextLength.coerceAtMost(512),
+                        "n_threads" to threads,
+                        "n_gpu_layers" to 0,
+                        "use_mlock" to false,
+                        "use_mmap" to true,
+                        "vocab_only" to false,
+                    ),
                 )
-                val modelUri = Uri.fromFile(modelFile).toString()
-                val loadComplete = CompletableDeferred<Unit>()
-
-                helper.load(
-                    path = modelUri,
-                    contextLength = DEFAULT_CONTEXT_LENGTH,
-                ) {
-                    loadComplete.complete(Unit)
-                }
-
-                loadComplete.await()
-                llamaHelper = helper
+                llamaContext = nativeContext
                 loadedModelPath = modelPath
                 loadedTemperature = temperature
+                loadedContextLength = contextLength
+                loadedThreadCount = threads
+                Log.i(TAG, "Loaded ${modelFile.name}: ctx=$contextLength, actualThreads=$threads, mmap=true")
                 LlmRunner.LoadResult.Success
-            } catch (t: Throwable) {
-                Log.e(TAG, "Failed to load GGUF model", t)
-                LlmRunner.LoadResult.Error(t.message ?: t.javaClass.simpleName)
+            } catch (error: Throwable) {
+                Log.e(TAG, "Failed to load GGUF model", error)
+                releaseLocked()
+                LlmRunner.LoadResult.Error(
+                    "GGUF initialization failed: ${error.message ?: error.javaClass.simpleName}. " +
+                        "Verify the file is a complete, supported GGUF and leave at least 1.5 GB free RAM.",
+                )
             }
         }
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     override suspend fun generate(
         prompt: String,
         seqLen: Int,
         sink: LlmRunner.TokenSink,
+        options: LlmRunner.GenerationOptions,
     ): LlmRunner.GenerateResult = withContext(dispatcher) {
         mutex.withLock {
-            val helper = llamaHelper
+            val nativeContext = llamaContext
                 ?: return@withLock LlmRunner.GenerateResult.Error("Model not loaded")
-
-            val builder = StringBuilder()
-            var errorMessage: String? = null
-            val generationDone = CompletableDeferred<Unit>()
-
-            // Bridge SharedFlow to a Channel so no events are lost between
-            // predict starting and collect subscribing. SharedFlow with
-            // replay=0 drops events that occur before a collector subscribes.
-            val eventChannel = Channel<LlamaHelper.LLMEvent>(capacity = 256)
-            val bridgeJob = scope.launch {
-                llmFlow.collect { event ->
-                    eventChannel.send(event)
-                }
+            val output = StringBuilder()
+            nativeContext.setTokenCallback { token ->
+                output.append(token)
+                sink.onToken(token)
             }
-
-            var predictJob: Job? = null
             try {
-                // Launch predict in a separate coroutine so that collect
-                // can receive token events concurrently. predict() is
-                // blocking and emits events to llmFlow; the bridge forwards
-                // them to the channel which buffers until we consume.
-                predictJob = scope.launch { helper.predict(prompt) }
-
-                eventChannel.consumeAsFlow().collect { event ->
-                    when (event) {
-                        is LlamaHelper.LLMEvent.Ongoing -> {
-                            builder.append(event.word)
-                            sink.onToken(event.word)
-                        }
-                        is LlamaHelper.LLMEvent.Done -> {
-                            generationDone.complete(Unit)
-                            throw FlowCollectionComplete
-                        }
-                        is LlamaHelper.LLMEvent.Error -> {
-                            errorMessage = "Generation error"
-                            generationDone.complete(Unit)
-                            throw FlowCollectionComplete
-                        }
-                        else -> {}
-                    }
-                }
-            } catch (e: FlowCollectionComplete) {
-                // Expected — flow collection interrupted after Done/Error
-            } catch (t: Throwable) {
-                return@withLock LlmRunner.GenerateResult.Error(
-                    t.message ?: t.javaClass.simpleName,
+                val result = nativeContext.completion(
+                    mapOf(
+                        "prompt" to prompt,
+                        "temperature" to if (options.deterministic) 0.0 else loadedTemperature.toDouble(),
+                        "n_predict" to seqLen,
+                        "n_threads" to loadedThreadCount,
+                        "emit_partial_completion" to true,
+                        "ignore_eos" to options.ignoreEos,
+                        "seed" to options.seed,
+                    ),
                 )
-            } finally {
-                predictJob?.cancel()
-                bridgeJob.cancel()
-                eventChannel.close()
-            }
-
-            generationDone.await()
-
-            val err = errorMessage
-            if (err != null) {
-                LlmRunner.GenerateResult.Error(err)
-            } else {
-                LlmRunner.GenerateResult.Success(builder.toString(), null)
+                val nativeText = result["text"] as? String
+                val generated = (result["tokens_predicted"] as? Number)?.toInt()
+                val promptTokens = (result["tokens_evaluated"] as? Number)?.toInt()
+                LlmRunner.GenerateResult.Success(
+                    text = nativeText?.takeIf { it.isNotEmpty() } ?: output.toString(),
+                    statsJson = JSONObject(result).toString(),
+                    generatedTokenCount = generated,
+                    promptTokenCount = promptTokens,
+                    actualThreadCount = loadedThreadCount,
+                )
+            } catch (error: Throwable) {
+                Log.e(TAG, "GGUF generation failed", error)
+                LlmRunner.GenerateResult.Error(error.message ?: error.javaClass.simpleName)
             }
         }
     }
 
     override fun stop() {
-        llamaHelper?.runCatching { stopPrediction() }
+        runCatching { llamaContext?.stopCompletion() }
     }
 
-    override suspend fun resetContext() {
-        withContext(dispatcher) {
-            mutex.withLock {
-                llamaHelper?.runCatching { stopPrediction() }
-            }
-        }
+    override suspend fun resetContext() = withContext(dispatcher) {
+        runCatching { llamaContext?.stopCompletion() }
+        Unit
     }
 
-    override suspend fun release() {
-        withContext(dispatcher) {
-            mutex.withLock { releaseLocked() }
-        }
+    override suspend fun release() = withContext(dispatcher) {
+        mutex.withLock { releaseLocked() }
     }
 
-    private fun modelMatches(modelPath: String, temperature: Float): Boolean =
-        llamaHelper != null &&
-            loadedModelPath == modelPath &&
-            loadedTemperature == temperature
+    fun modelDetails(): Map<String, Any> = llamaContext?.modelDetails.orEmpty()
+
+    fun actualThreadCount(): Int = loadedThreadCount
+
+    fun tokenize(text: String): Int? = runCatching { llamaContext?.tokenize(text)?.size }.getOrNull()
+
+    fun nativeBench(promptTokens: Int = 128, generatedTokens: Int = 32, repetitions: Int = 3): String? =
+        runCatching { llamaContext?.bench(promptTokens, generatedTokens, 1, repetitions) }.getOrNull()
+
+    private fun modelMatches(path: String, temperature: Float, contextLength: Int, threads: Int): Boolean =
+        llamaContext != null && loadedModelPath == path && loadedTemperature == temperature &&
+            loadedContextLength == contextLength && loadedThreadCount == threads
 
     private fun releaseLocked() {
-        val helper = llamaHelper ?: return
-        runCatching { helper.stopPrediction() }
-        llamaHelper = null
+        runCatching { llamaContext?.stopCompletion() }
+        runCatching { llamaContext?.release() }
+        llamaContext = null
         loadedModelPath = null
         loadedTemperature = Float.NaN
-    }
-
-    private object FlowCollectionComplete : Throwable() {
-        override fun fillInStackTrace(): Throwable = this
+        loadedContextLength = 0
+        loadedThreadCount = 0
     }
 
     companion object {
         private const val TAG = "LlamaCppRunner"
-        private const val DEFAULT_CONTEXT_LENGTH = 2048
+        private const val MIN_CONTEXT_LENGTH = 512
+        private const val DEFAULT_THREADS = 4
+        private val NEXT_CONTEXT_ID = AtomicInteger(1)
     }
 }

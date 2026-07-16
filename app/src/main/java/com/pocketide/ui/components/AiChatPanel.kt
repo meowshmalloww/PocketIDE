@@ -1,11 +1,5 @@
 package com.pocketide.ui.components
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -32,21 +26,28 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -56,7 +57,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import com.pocketide.data.model.AiMode
 import com.pocketide.data.model.AgentStatus
 import com.pocketide.data.model.ChatMessage
+import com.pocketide.data.model.ChatSessionSummary
 import com.pocketide.data.model.MessageRole
 import com.pocketide.data.model.ModelMode
 
@@ -76,12 +77,86 @@ fun AiChatPanel(
     isGenerating: Boolean,
     modifier: Modifier = Modifier,
     onNewChat: () -> Unit = {},
+    chatSessions: List<ChatSessionSummary> = emptyList(),
+    activeChatSessionId: String? = null,
+    onOpenChatSession: (String) -> Unit = {},
+    onDeleteChatSession: (String) -> Unit = {},
     aiMode: AiMode = AiMode.CODE,
     onAiModeChange: (AiMode) -> Unit = {},
     modelMode: ModelMode = ModelMode.SINGLE,
     onModelModeChange: (ModelMode) -> Unit = {},
     isThinking: Boolean = false,
+    lastTokensPerSecond: Float? = null,
+    lastTtftMs: Long? = null,
+    lastStrategy: String? = null,
+    onExportBenchmark: (() -> Unit)? = null,
+    benchmarkRunning: Boolean = false,
+    benchmarkCompletedRuns: Int = 0,
+    benchmarkTotalRuns: Int = 0,
+    benchmarkSummary: String? = null,
+    benchmarkError: String? = null,
+    onRunBenchmark: () -> Unit = {},
+    onCopyBenchmarkJson: () -> Unit = {},
+    onClearBenchmark: () -> Unit = {},
 ) {
+    var historyExpanded by remember { mutableStateOf(false) }
+    var benchmarkOpen by remember { mutableStateOf(false) }
+    if (benchmarkOpen) {
+        AlertDialog(
+            onDismissRequest = { if (!benchmarkRunning) benchmarkOpen = false },
+            title = { Text("On-device benchmark") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(
+                        "Calibrates real llama.cpp decode across 1–4 threads (plus the device heuristic). Each profile gets 1 warmup and 3 equal measured runs; output is capped at 96 tokens and the actual count is reported.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (benchmarkRunning) {
+                        LinearProgressIndicator(
+                            progress = {
+                                if (benchmarkTotalRuns == 0) 0f
+                                else benchmarkCompletedRuns.toFloat() / benchmarkTotalRuns
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text("Run $benchmarkCompletedRuns of $benchmarkTotalRuns", style = MaterialTheme.typography.labelSmall)
+                    }
+                    benchmarkSummary?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                    }
+                    benchmarkError?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
+                    Text(
+                        "The fastest stable profile is saved for normal GGUF chat on this device and model. Emulator results verify correctness only; submit Arm phone measurements.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = onRunBenchmark, enabled = !benchmarkRunning) {
+                    Text(if (benchmarkSummary == null) "Run benchmark" else "Run again")
+                }
+            },
+            dismissButton = {
+                Row {
+                    if (benchmarkSummary != null) {
+                        TextButton(onClick = onCopyBenchmarkJson) { Text("JSON") }
+                        onExportBenchmark?.let { copyReport ->
+                            TextButton(onClick = copyReport) { Text("Report") }
+                        }
+                        TextButton(onClick = onClearBenchmark) { Text("Clear") }
+                    }
+                }
+            },
+        )
+    }
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -120,6 +195,64 @@ fun AiChatPanel(
                     .weight(1f)
                     .padding(start = 10.dp),
             )
+            Box {
+                IconButton(onClick = { historyExpanded = true }, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        imageVector = Icons.Filled.History,
+                        contentDescription = "Chat history",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                DropdownMenu(
+                    expanded = historyExpanded,
+                    onDismissRequest = { historyExpanded = false },
+                ) {
+                    if (chatSessions.isEmpty()) {
+                        DropdownMenuItem(
+                            text = { Text("No saved conversations") },
+                            onClick = { historyExpanded = false },
+                            enabled = false,
+                        )
+                    } else {
+                        chatSessions.forEach { session ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(
+                                            session.title,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = if (session.id == activeChatSessionId) FontWeight.Bold else FontWeight.Normal,
+                                            maxLines = 1,
+                                        )
+                                        Text(
+                                            "${session.projectName} · ${session.messageCount} messages",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    historyExpanded = false
+                                    onOpenChatSession(session.id)
+                                },
+                                trailingIcon = {
+                                    IconButton(
+                                        onClick = { onDeleteChatSession(session.id) },
+                                        modifier = Modifier.size(28.dp),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Delete,
+                                            contentDescription = "Delete conversation",
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+            }
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
@@ -144,6 +277,15 @@ fun AiChatPanel(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
+            // Benchmark export button — visible after at least one generation
+            IconButton(onClick = { benchmarkOpen = true }, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    imageVector = Icons.Filled.Assessment,
+                    contentDescription = "Benchmark",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
             }
         }
         HorizontalDivider(
@@ -211,7 +353,7 @@ fun AiChatPanel(
                     style = MaterialTheme.typography.bodySmall,
                 )
             },
-            enabled = !isGenerating,
+            enabled = !isGenerating && !benchmarkRunning,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -221,7 +363,7 @@ fun AiChatPanel(
             trailingIcon = {
                 IconButton(
                     onClick = onSend,
-                    enabled = !isGenerating && inputText.isNotBlank(),
+                    enabled = !isGenerating && !benchmarkRunning && inputText.isNotBlank(),
                     modifier = Modifier.size(32.dp),
                 ) {
                     if (isGenerating) {
@@ -625,17 +767,6 @@ private fun GeneratingIndicator() {
 
 @Composable
 private fun ThinkingIndicator() {
-    val infiniteTransition = rememberInfiniteTransition(label = "thinking")
-    val rotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "rotation",
-    )
-
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -645,13 +776,10 @@ private fun ThinkingIndicator() {
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
-        Icon(
-            imageVector = Icons.Filled.Psychology,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier
-                .size(18.dp)
-                .rotate(rotation),
+        CircularProgressIndicator(
+            strokeWidth = 2.dp,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp),
         )
         Text(
             text = "Thinking...",

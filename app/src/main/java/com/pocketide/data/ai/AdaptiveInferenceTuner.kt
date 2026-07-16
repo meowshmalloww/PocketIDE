@@ -3,6 +3,7 @@ package com.pocketide.data.ai
 import android.content.Context
 import android.os.BatteryManager
 import android.os.Build
+import android.os.PowerManager
 import android.util.Log
 import java.io.File
 
@@ -29,21 +30,50 @@ object AdaptiveInferenceTuner {
      * Produces an [InferenceTuning] based on current device conditions and the
      * user's [AiConfig] optimization flags.
      */
-    fun tune(config: AiConfig, context: Context?): InferenceTuning {
+    fun tune(
+        config: AiConfig,
+        context: Context?,
+        calibratedThreadCount: Int? = null,
+    ): InferenceTuning {
         val baseSeqLen = config.maxSeqLen
-        val baseThreads = Runtime.getRuntime().availableProcessors()
+        val cpuCores = Runtime.getRuntime().availableProcessors()
+        val optimalThreads = BackendInfo.optimalThreadCount
+        val cpuFeatures = BackendInfo.features
 
         val batteryLevel = readBatteryLevel(context)
         val batteryTemp = readBatteryTemperature(context)
+        val thermalStatus = readThermalStatus(context)
         val isCharging = isCharging(context)
         val memoryPressure = computeMemoryPressure()
 
         var seqLen = baseSeqLen
-        var threads = baseThreads
-        var strategy = InferenceStrategy.BALANCED
+        var threads = calibratedThreadCount?.coerceIn(1, cpuCores) ?: optimalThreads
+        var strategy = if (calibratedThreadCount != null) {
+            InferenceStrategy.DEVICE_CALIBRATED
+        } else {
+            InferenceStrategy.BALANCED
+        }
 
         // --- Thermal ---
-        if (config.thermalAware) {
+        if (config.thermalAware && thermalStatus != null) {
+            when {
+                thermalStatus >= PowerManager.THERMAL_STATUS_CRITICAL -> {
+                    seqLen = (seqLen * 0.4f).toInt().coerceAtLeast(64)
+                    threads = (threads * 0.5f).toInt().coerceAtLeast(1)
+                    strategy = InferenceStrategy.THERMAL_EMERGENCY
+                }
+                thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE -> {
+                    seqLen = (seqLen * 0.5f).toInt().coerceAtLeast(64)
+                    threads = (threads * 0.6f).toInt().coerceAtLeast(1)
+                    strategy = InferenceStrategy.THERMAL_THROTTLED
+                }
+                thermalStatus >= PowerManager.THERMAL_STATUS_MODERATE -> {
+                    seqLen = (seqLen * 0.7f).toInt().coerceAtLeast(64)
+                    threads = (threads * 0.75f).toInt().coerceAtLeast(1)
+                    strategy = InferenceStrategy.THERMAL_THROTTLED
+                }
+            }
+        } else if (config.thermalAware) {
             when {
                 batteryTemp >= THERMAL_CRITICAL_CELSIUS -> {
                     seqLen = (seqLen * 0.4f).toInt().coerceAtLeast(64)
@@ -64,7 +94,7 @@ object AdaptiveInferenceTuner {
         if (config.powerSaving || (batteryLevel in 0..LOW_BATTERY_THRESHOLD && !isCharging)) {
             seqLen = (seqLen * 0.5f).toInt().coerceAtLeast(128)
             threads = (threads * 0.6f).toInt().coerceAtLeast(1)
-            if (strategy == InferenceStrategy.BALANCED) {
+            if (strategy == InferenceStrategy.BALANCED || strategy == InferenceStrategy.DEVICE_CALIBRATED) {
                 strategy = InferenceStrategy.POWER_SAVER
             }
         }
@@ -72,25 +102,31 @@ object AdaptiveInferenceTuner {
         // --- Memory pressure ---
         if (memoryPressure >= MEMORY_PRESSURE_RATIO) {
             seqLen = (seqLen * 0.6f).toInt().coerceAtLeast(64)
-            if (strategy == InferenceStrategy.BALANCED) {
+            if (strategy == InferenceStrategy.BALANCED || strategy == InferenceStrategy.DEVICE_CALIBRATED) {
                 strategy = InferenceStrategy.MEMORY_CONSTRAINED
             }
         }
 
         // --- Adaptive cores ---
-        if (config.adaptiveCores) {
-            if (baseThreads <= 4) {
+        if (config.adaptiveCores && calibratedThreadCount == null) {
+            // Use BackendInfo's big.LITTLE-aware heuristic
+            if (cpuCores <= 4) {
                 seqLen = (seqLen * 0.8f).toInt().coerceAtLeast(64)
-                threads = baseThreads
-            } else if (baseThreads <= 6) {
-                threads = (baseThreads * 0.75f).toInt().coerceAtLeast(2)
+                threads = cpuCores
+            } else if (cpuCores <= 6) {
+                threads = (cpuCores * 0.75f).toInt().coerceAtLeast(2)
             } else {
-                threads = (baseThreads * 0.8f).toInt().coerceAtLeast(2)
+                threads = optimalThreads
+            }
+            // On Arm big.LITTLE: if KleidiAI i8mm capable, we can use fewer
+            // threads because the SIMD kernels are more efficient
+            if (cpuFeatures.kleidiAiInt4Capable && threads > 4) {
+                threads = (threads * 0.85f).toInt().coerceAtLeast(2)
             }
         }
 
-        // Cap threads at base
-        threads = threads.coerceAtMost(baseThreads).coerceAtLeast(1)
+        // Cap threads at CPU cores
+        threads = threads.coerceAtMost(cpuCores).coerceAtLeast(1)
 
         val tuning = InferenceTuning(
             seqLen = seqLen,
@@ -100,7 +136,13 @@ object AdaptiveInferenceTuner {
             batteryTempCelsius = batteryTemp,
             isCharging = isCharging,
             memoryPressureRatio = memoryPressure,
-            cpuCores = baseThreads,
+            cpuCores = cpuCores,
+            thermalStatus = thermalStatus,
+            kleidiAiInt4Capable = cpuFeatures.kleidiAiInt4Capable,
+            kleidiAiInt8Capable = cpuFeatures.kleidiAiInt8Capable,
+            hasI8mm = cpuFeatures.hasI8mm,
+            hasDotprod = cpuFeatures.hasDotprod,
+            hasSve2 = cpuFeatures.hasSve2,
         )
 
         Log.i(TAG, "Tuned: $tuning")
@@ -151,6 +193,14 @@ object AdaptiveInferenceTuner {
         }
     }
 
+    private fun readThermalStatus(context: Context?): Int? {
+        if (context == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        return runCatching {
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            powerManager.currentThermalStatus
+        }.getOrNull()
+    }
+
     private fun computeMemoryPressure(): Float {
         val runtime = Runtime.getRuntime()
         val used = runtime.totalMemory() - runtime.freeMemory()
@@ -161,6 +211,8 @@ object AdaptiveInferenceTuner {
 
 enum class InferenceStrategy(val displayName: String) {
     BALANCED("Balanced — full quality"),
+    DEVICE_CALIBRATED("Device calibrated — measured thread profile"),
+    BENCHMARK_FIXED("Benchmark fixed profile"),
     POWER_SAVER("Power saver — reduced seqLen and threads"),
     THERMAL_THROTTLED("Thermal throttled — reduced compute"),
     THERMAL_EMERGENCY("Thermal emergency — minimal compute"),
@@ -176,9 +228,17 @@ data class InferenceTuning(
     val isCharging: Boolean,
     val memoryPressureRatio: Float,
     val cpuCores: Int,
+    val thermalStatus: Int? = null,
+    val kleidiAiInt4Capable: Boolean = false,
+    val kleidiAiInt8Capable: Boolean = false,
+    val hasI8mm: Boolean = false,
+    val hasDotprod: Boolean = false,
+    val hasSve2: Boolean = false,
 ) {
     fun summary(): String =
         "strategy=${strategy.displayName}, seqLen=$seqLen, threads=$threadCount, " +
             "battery=$batteryLevel% (${if (isCharging) "charging" else "discharging"}), " +
-            "temp=${batteryTempCelsius}C, memPressure=${(memoryPressureRatio * 100).toInt()}%, cores=$cpuCores"
+            "temp=${batteryTempCelsius}C, memPressure=${(memoryPressureRatio * 100).toInt()}%, " +
+            "thermalStatus=${thermalStatus ?: "unavailable"}, cores=$cpuCores, i8mm=$hasI8mm, dotprod=$hasDotprod, " +
+            "kleidiAI_int4=$kleidiAiInt4Capable, sve2=$hasSve2"
 }

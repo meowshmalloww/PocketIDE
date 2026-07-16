@@ -24,7 +24,6 @@ fun PocketIDENavGraph(
         composable(Screen.Editor.route) {
             EditorScreen(
                 onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                themeViewModel = themeViewModel,
                 viewModel = editorViewModel,
             )
         }

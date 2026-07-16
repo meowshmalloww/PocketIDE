@@ -1,5 +1,7 @@
 package com.pocketide.data.ai
 
+import android.app.ActivityManager
+import android.content.Context
 import android.util.Log
 
 /**
@@ -23,11 +25,11 @@ import android.util.Log
  * to ensure the KV cache won't cause OOM.
  */
 class KvCacheManager(
-    private val numLayers: Int,
+    internal val numLayers: Int,
     private val hiddenDim: Int,
     private val kvHeads: Int,
     private val headDim: Int,
-    private val bytesPerElement: Int = 2, // FP16 KV cache by default
+    private val bytesPerElement: Int = 2, // FP16 KV cache estimate by default
 ) {
 
     private var currentSeqLen: Int = 0
@@ -56,28 +58,35 @@ class KvCacheManager(
      * @param safetyMarginBytes extra memory to reserve for activations and intermediate tensors
      * @return [KvCacheDecision] indicating whether to proceed, reduce, or reset
      */
-    fun checkMemory(seqLen: Int, safetyMarginBytes: Long = 64L * 1024 * 1024): KvCacheDecision {
+    fun checkMemory(
+        seqLen: Int,
+        context: Context? = null,
+        safetyMarginBytes: Long = 64L * 1024 * 1024,
+    ): KvCacheDecision {
         val runtime = Runtime.getRuntime()
         val usedHeap = runtime.totalMemory() - runtime.freeMemory()
         val maxHeap = runtime.maxMemory()
-        val availableHeap = maxHeap - usedHeap
+        val javaHeapAvailable = (maxHeap - usedHeap).coerceAtLeast(0L)
+        val memoryBudget = memoryBudget(context, javaHeapAvailable)
+        val availableMemory = memoryBudget.availableBytes
 
         val kvCacheBytes = estimateKvCacheBytes(seqLen)
         val totalNeeded = kvCacheBytes + safetyMarginBytes
 
-        val availableMb = availableHeap / (1024f * 1024f)
+        val availableMb = availableMemory / (1024f * 1024f)
         val neededMb = totalNeeded / (1024f * 1024f)
 
         Log.d(TAG, "KV cache check: need=${neededMb.format(1)}MB, available=${availableMb.format(1)}MB, " +
-            "seqLen=$seqLen, layers=$numLayers, kvHeads=$kvHeads, headDim=$headDim")
+            "seqLen=$seqLen, layers=$numLayers, kvHeads=$kvHeads, headDim=$headDim, " +
+            "bytesPerElem=$bytesPerElement, source=${memoryBudget.source}")
 
         return when {
-            totalNeeded > availableHeap -> {
-                val maxAffordableSeqLen = findMaxAffordableSeqLen(availableHeap - safetyMarginBytes)
+            totalNeeded > availableMemory -> {
+                val maxAffordableSeqLen = findMaxAffordableSeqLen(availableMemory - safetyMarginBytes)
                 if (maxAffordableSeqLen < MIN_SEQ_LEN) {
                     KvCacheDecision.ResetContext(
                         reason = "Insufficient memory for KV cache: need ${neededMb.format(1)}MB, " +
-                            "available ${availableMb.format(1)}MB",
+                            "available ${availableMb.format(1)}MB (${memoryBudget.source})",
                     )
                 } else {
                     KvCacheDecision.ReduceSeqLen(
@@ -87,7 +96,7 @@ class KvCacheManager(
                     )
                 }
             }
-            totalNeeded > availableHeap * 0.75f -> {
+            totalNeeded > availableMemory * 0.75f -> {
                 val reducedSeqLen = (seqLen * 0.8f).toInt().coerceAtLeast(MIN_SEQ_LEN)
                 KvCacheDecision.ReduceSeqLen(
                     newSeqLen = reducedSeqLen,
@@ -126,15 +135,40 @@ class KvCacheManager(
      */
     fun totalTokensGenerated(): Int = totalTokensGenerated
 
+    /** This reports the estimate only; native KV precision is controlled by the runtime/model export. */
+    fun isKvCacheQuantized(): Boolean = bytesPerElement == 1
+
+    fun currentBytesPerElement(): Int = bytesPerElement
+
     /**
      * Finds the maximum sequence length that fits within the given byte budget.
      */
     private fun findMaxAffordableSeqLen(byteBudget: Long): Int {
-        if (byteBudget <= 0) return MIN_SEQ_LEN
+        if (byteBudget <= 0) return 0
         val bytesPerToken = 2L * numLayers * (kvHeads * headDim) * bytesPerElement
-        if (bytesPerToken <= 0) return MIN_SEQ_LEN
-        return (byteBudget / bytesPerToken).toInt().coerceIn(MIN_SEQ_LEN, MAX_SEQ_LEN)
+        if (bytesPerToken <= 0) return 0
+        val affordable = (byteBudget / bytesPerToken).toInt()
+        return if (affordable < MIN_SEQ_LEN) 0 else affordable.coerceAtMost(MAX_SEQ_LEN)
     }
+
+    private fun memoryBudget(context: Context?, javaHeapAvailable: Long): MemoryBudget {
+        if (context == null) return MemoryBudget(javaHeapAvailable, "Java heap")
+        val memoryInfo = runCatching {
+            val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            ActivityManager.MemoryInfo().also(manager::getMemoryInfo)
+        }.getOrNull() ?: return MemoryBudget(javaHeapAvailable, "Java heap")
+        val systemHeadroom = (memoryInfo.availMem - memoryInfo.threshold).coerceAtLeast(0L)
+        return MemoryBudget(
+            availableBytes = minOf(javaHeapAvailable, systemHeadroom),
+            source = if (memoryInfo.lowMemory) {
+                "Android low-memory state"
+            } else {
+                "min(Java heap, Android system headroom)"
+            },
+        )
+    }
+
+    private data class MemoryBudget(val availableBytes: Long, val source: String)
 
     private fun Float.format(digits: Int): String = "%.${digits}f".format(this)
 
@@ -165,37 +199,52 @@ class KvCacheManager(
          * @param modelSize approximate parameter count (e.g. 0.5e9 for 0.5B, 1.5e9 for 1.5B)
          */
         fun forModelSize(modelSize: Float, bytesPerElement: Int = 2): KvCacheManager {
+            // Heuristic for backward compatibility — prefer forArchitecture()
             val numLayers = when {
                 modelSize <= 0.5e9f -> 24
                 modelSize <= 1.5e9f -> 28
-                modelSize <= 3.0e9f -> 32
-                modelSize <= 7.0e9f -> 32
+                modelSize <= 3.0e9f -> 36
+                modelSize <= 7.0e9f -> 28
                 else -> 40
             }
             val hiddenDim = when {
                 modelSize <= 0.5e9f -> 896
                 modelSize <= 1.5e9f -> 1536
                 modelSize <= 3.0e9f -> 2048
-                modelSize <= 7.0e9f -> 4096
+                modelSize <= 7.0e9f -> 3584
                 else -> 5120
             }
             val kvHeads = when {
                 modelSize <= 0.5e9f -> 2
                 modelSize <= 1.5e9f -> 2
                 modelSize <= 3.0e9f -> 4
-                else -> 8
+                else -> 4
             }
-            val headDim = hiddenDim / when {
-                modelSize <= 0.5e9f -> 14
-                modelSize <= 1.5e9f -> 12
-                modelSize <= 3.0e9f -> 16
-                else -> 32
+            val headDim = when {
+                modelSize <= 0.5e9f -> 64
+                modelSize <= 1.5e9f -> 128
+                modelSize <= 3.0e9f -> 64
+                else -> 128
             }
             return KvCacheManager(
                 numLayers = numLayers,
                 hiddenDim = hiddenDim,
                 kvHeads = kvHeads,
                 headDim = headDim,
+                bytesPerElement = bytesPerElement,
+            )
+        }
+
+        /**
+         * Creates a [KvCacheManager] from a [ModelSpec.Architecture] detected
+         * from the actual model file. Preferred over [forModelSize].
+         */
+        fun forArchitecture(arch: ModelSpec.Architecture, bytesPerElement: Int = 2): KvCacheManager {
+            return KvCacheManager(
+                numLayers = arch.numLayers,
+                hiddenDim = arch.hiddenDim,
+                kvHeads = arch.numKvHeads,
+                headDim = arch.headDim,
                 bytesPerElement = bytesPerElement,
             )
         }

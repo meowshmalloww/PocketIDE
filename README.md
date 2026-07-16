@@ -1,174 +1,92 @@
 # PocketIDE
 
-A mobile AI IDE that runs **entirely on-device** — no cloud, no API keys, no network calls. AI generates code, executes it, catches errors, and repairs itself, all powered by on-device LLM inference optimized for Arm.
+PocketIDE is an Android IDE with a fully local AI coding assistant. It can generate multi-file projects, run supported languages, accept terminal input, inspect errors, and repair failed code without sending prompts or source code to a server.
 
-> **Arm AI Optimization Challenge 2026 — Track 3: Mobile AI**
+Built for the [Arm AI Optimization Challenge 2026](https://arm-ai-optimization-challenge.devpost.com/) Mobile AI track.
 
-## Features
+## What it does
 
-### On-Device AI Inference
+- Runs GGUF language models locally through llama.cpp; ExecuTorch `.pte` support is also included.
+- Generates and updates multiple project files from one request.
+- Executes code on the phone and displays stdout, stderr, source locations, and runtime status.
+- Supports interactive terminal input for programs such as Python menus.
+- Opens HTML, CSS, JavaScript, and simple TypeScript projects in the phone browser through `127.0.0.1`.
+- Exposes Android features such as sensors, flashlight, vibration, battery, GPS, TTS, notifications, files, and camera information to supported scripts.
+- Stores projects, model configuration, and AI chat history locally.
 
-- **Dual model runtime support** — ExecuTorch (`.pte` models) and llama.cpp (`.gguf` models) via `kotlinllamacpp`
-- **ExecuTorch integration** — `LlmModule` wrapper (`ExecutorchLlmRunner`) with coroutine-friendly load/generate/stop/close lifecycle, model instance reuse across requests, and mutex-serialized native calls
-- **llama.cpp integration** — `LlamaHelper` wrapper (`LlamaCppRunner`) for GGUF model files with SharedFlow-to-Channel event bridging, self-contained tokenizer (no separate tokenizer file needed)
-- **Prompt templating** — Llama 3 / 3.2 Instruct, Qwen 2.5 / Qwen 3 ChatML, and Plain templates with system + history + user message formatting
-- **Structured response parsing** — AI responds in PLAN / FILENAME / code-block format; parsed into actionable file operations
-- **Autonomous self-repair loop** — generates code → executes it → captures stderr → sends error context back to AI → re-executes, up to configurable max iterations
-- **Configurable inference** — temperature, max sequence length, prompt template, quantization level (INT4 / INT8 / FP32), all persisted via SharedPreferences
-- **Live token streaming** — tokens appear in the chat panel as they are generated
-- **Real-time benchmark display** — each AI message shows TTFT (time to first token), tokens/sec, memory delta (MB), and active inference strategy (e.g. Balanced, Power Saver, Thermal Throttled)
-- **Thinking indicator** — animated rotating icon while AI is processing
-- **AI modes** — CODE (generate code), ASK (explain concepts), PLAN (detailed planning)
-- **Model modes** — SINGLE (one model) or SWARM (multi-model orchestration)
+AI modes:
 
-### AI Optimization Pipeline
+- **Code:** generate or edit project files.
+- **Ask:** explain code without changing files.
+- **Plan:** produce an implementation plan.
+- **Swarm:** reuse the active local model sequentially as Architect, Coder, and Validator. It does not require three models.
 
-PocketIDE implements a 3-stage adaptive optimization pipeline that runs before every generation call:
+## Arm optimization
 
-1. **`AdaptiveInferenceTuner`** — Reads real-time device conditions (battery level, battery temperature, charging status, JVM heap pressure, CPU core count) and produces an `InferenceTuning` that adjusts sequence length and thread count. Selects from 5 strategies: `BALANCED`, `POWER_SAVER`, `THERMAL_THROTTLED`, `THERMAL_EMERGENCY`, `MEMORY_CONSTRAINED`.
-2. **`KvCacheManager`** — Estimates the KV cache memory footprint for the planned sequence length using model architecture parameters (num layers, hidden dim, KV heads, head dim, bytes per element). If the KV cache would exceed available heap, it either reduces the sequence length or triggers a context reset to prevent OOM.
-3. **`InferenceBenchmark`** — Wraps the generation call to measure TTFT (time to first token), sustained tokens/sec, total token count, memory delta (heap before/after), and peak heap usage. Results are displayed per-message in the AI chat panel.
+PocketIDE measures real inference performance instead of assuming that more CPU threads are faster. Its benchmark runs equal warmup and measured generations across 1–4 llama.cpp thread profiles, selects the fastest measured profile, and saves the result for that exact phone and model file.
 
-**`AgentContextPruner`** — Role-specific context pruning for the SWARM pipeline. Each agent (Architect, Coder, Validator) receives only the context relevant to its role:
-- **Architect**: file names, languages, line counts, first 5 lines per file (no full code)
-- **Coder**: full active file content + summaries of other files (first 10 lines)
-- **Validator**: failing code + error output only (no project context unless error is cross-file)
+Normal inference also responds to thermal state, battery level, and memory pressure by reducing thread count or generation length when needed.
 
-### Code Execution — 7 Languages Fully Supported
+### Physical-device result
 
-| Language | Engine | Notes |
-|---|---|---|
-| **JavaScript** | Mozilla Rhino 1.7.15 | ES6→ES5 transpilation (let/const, arrow functions, template literals, for...of, default params), ES6+ polyfills (Object.assign, Array.find, String.includes, etc.), `console.log()` support, instruction-count infinite-loop protection, **full hardware bridge** |
-| **TypeScript** | Rhino (via JS transpilation) | Type annotations stripped, then ES6→ES5 preprocessing applied, **full hardware bridge** |
-| **Python** | Rhino (via JS transpilation) | Python-to-JS transpilation: `print()`, `range()`, `len()`, `input()`, `for...in`, `if/elif/else`, `while`, `def` functions, `try/except`, string methods, list operations, **full hardware bridge** |
-| **Lua** | LuaJ 3.0.1 | Full Lua 5.2 standard library, `print()` capture, **full hardware bridge** |
-| **SQL** | Android SQLite | In-memory temp database, SELECT/INSERT/UPDATE/DELETE/CREATE TABLE, formatted tabular output |
-| **Java** | BeanShell 3.0 | Scripting mode, `System.out` capture, basic Java execution, **full hardware bridge** |
-| **Shell** | `ProcessBuilder` | `/system/bin/sh`, 10-second timeout, stdout/stderr capture |
+Tested on an LGE LM-Q620 running Android 12 with Qwen2.5-Coder 1.5B Instruct Q4_0:
 
-### 14 Language Definitions (Syntax Highlighting)
+| Metric | Previous 4-thread heuristic | Calibrated 2-thread profile | Change |
+|---|---:|---:|---:|
+| Decode throughput | 8.24 tok/s | 11.67 tok/s | **+41.6%** |
+| Average TTFT | 115 ms | 104 ms | **-9.6%** |
+| Average steady process PSS | 1880 MB | 2014 MB | +7.1% |
 
-Python, JavaScript, TypeScript, Kotlin, Dart, SQL, HTML, CSS, Java, Lua, Shell, YAML, Markdown, JSON — all with custom syntax highlighting (keywords, strings, comments, numbers) and language-aware file icons in tabs.
+Benchmark protocol: one warmup and three measured 96-token generations per profile, 16 total runs. The phone loaded `librnllama_v8_2_dotprod.so`, selected at runtime from its Arm CPU features.
 
-### IDE Experience
+The selected profile maximizes decode speed. It is not claimed to minimize memory at the same time.
 
-- **Custom code editor** — `BasicTextField` with syntax highlighting, line numbers, horizontal/vertical scrolling, and synced gutter
-- **Multi-file project support** — file explorer, tab bar with language icons, create/delete/save operations with unsaved-change tracking
-- **File tabs** — VS Code-style tabs with active indicator, unsaved dot, language badge, close button
-- **Project switcher** — create, switch, and delete projects with isolated file namespaces
-- **AI chat panel** — message bubbles, scrollable code blocks, agent status badges, mode selectors (CODE/ASK/PLAN, SINGLE/SWARM), new chat button
-- **Terminal panel** — collapsible, status indicators (running/passed/failed), run/repair buttons, auto-scroll, monospace output
-- **Responsive layout** — landscape (split view with draggable panels) and portrait (tab-switched full screen) modes
-- **Draggable panels** — explorer width, terminal height, AI overlay width all adjustable via drag handles
-- **Extensions panel** — browse available extensions
-- **Dark/light theme** — VS Code-inspired neutral palette with persisted preference
-- **Settings screen** — on-device model config (`.pte` or `.gguf`), optimization toggles (power saving, thermal-aware, adaptive cores), agent repair iterations, context window size, code context injection, history summarization, sandbox language enable/disable
+## Language support
 
-## Tech Stack
-
-| Component | Technology |
+| Language | Support |
 |---|---|
-| Language | Kotlin 2.2.10 |
-| UI | Jetpack Compose + Material 3 |
-| Code Editor | Custom `BasicTextField` + `SyntaxHighlighter` |
-| On-Device AI (PTE) | ExecuTorch 1.0.0 (`LlmModule`) — XNNPACK + KleidiAI on Arm |
-| On-Device AI (GGUF) | kotlinllamacpp (`LlamaHelper`) — llama.cpp backend |
-| JS Execution | Mozilla Rhino 1.7.15 |
-| Lua Execution | LuaJ 3.0.1 |
-| Java Execution | BeanShell 3.0 |
-| SQL Execution | Android SQLite |
-| Shell Execution | `ProcessBuilder` (`/system/bin/sh`) |
-| Local HTTP Server | NanoHTTPD 2.3.1 (localhost sandbox web server) |
-| Navigation | Compose Navigation 2.8.5 |
-| Persistence | SharedPreferences (config) + internal storage (files) |
-| Testing | JUnit 4.13.2 + Robolectric 4.14.1 + kotlinx.coroutines.test |
-| Build | Gradle + AGP 9.2.1 |
-| Min SDK | 26 (Android 8.0) |
-| Target SDK | 36 |
-| ABI Filters | `arm64-v8a` (target), `x86_64` (emulator testing) |
+| Python | CPython 3.11, interactive `input()`, tracebacks, sibling-file imports |
+| JavaScript | Rhino with compatibility preprocessing and terminal input |
+| Lua | LuaJ with `io.read()` terminal input |
+| SQL | Android SQLite |
+| Shell | Android `/system/bin/sh` with a timeout |
+| TypeScript | Compatibility type stripping, then Rhino; not a complete TypeScript compiler |
+| Java | BeanShell scripting; not Android `javac` |
+| HTML/CSS/JS/simple TS | Device-local browser preview |
+| Kotlin, Dart, YAML, Markdown, JSON | Editing and syntax highlighting only |
 
-## Arm Optimization Pipeline
+PocketIDE edits and highlights 14 formats, but it does not claim complete compilers for all of them.
 
-PocketIDE is built for the **Arm AI Optimization Challenge — Track 3: Mobile AI**. All inference runs locally on Arm-powered devices (arm64-v8a) with optimizations at every layer:
+## Android hardware bridge
 
-### XNNPACK + KleidiAI Integration
+Python, JavaScript, TypeScript, Lua, and BeanShell scripts executed inside PocketIDE receive a global `hardware` object. Common methods include:
 
-| Layer | Technology | Role |
-|---|---|---|
-| **Model export** | ExecuTorch + KleidiAI | INT4/INT8 quantization with KleidiAI-optimized kernels baked into `.pte` |
-| **Runtime backend** | XNNPACK | Arm NEON-optimized inference kernels, bundled in ExecuTorch AAR |
-| **CPU detection** | `BackendInfo` | Runtime detection of NEON, i8mm, dotprod, SVE2, SME2 capabilities |
-| **Thread tuning** | `BackendInfo.optimalThreadCount` | big.LITTLE-aware thread count to avoid thermal throttling |
-
-### How It Works
-
-1. **At model export time (Python):** The model is exported to `.pte` with `--enable_kleidiai` and XNNPACK delegate. KleidiAI provides optimized INT4/INT8 matmul kernels for Arm Cortex-A and Cortex-X cores.
-
-2. **At app startup:** `BackendInfo` reads `/proc/cpuinfo` to detect Arm CPU features:
-   - **NEON** — baseline SIMD for all arm64-v8a
-   - **i8mm** — INT8 matrix multiplication (required for KleidiAI INT4 kernels)
-   - **dotprod** — ARMv8.4 dot product instructions (accelerates INT8 inference)
-   - **SVE2** — Scalable Vector Extension 2 (enables SME2 workloads)
-   - **SME2** — Scalable Matrix Extension (advanced matrix multiplication)
-
-3. **At model load time:** `BackendInfo.logBackendInfo()` logs the full capability profile, so you can verify which optimizations are active.
-
-4. **At inference time:** XNNPACK automatically dispatches to the best kernel for the detected CPU features. No manual configuration needed — the `.pte` model + XNNPACK runtime handle it.
-
-### Exporting a Model with KleidiAI
-
-```bash
-# Install ExecuTorch with KleidiAI support
-pip install executorch
-
-# Export with XNNPACK + KleidiAI (INT4)
-python -m executorch.exir.export_to_edge \
-    --model_name "Qwen2ForCausalLM" \
-    --hf_model_dir ./my_finetuned_model \
-    --output_model my_model_kleidiai_int4.pte \
-    --enable_kleidiai \
-    --quantize int4 \
-    --xnnpack_delegate
-
-# You also need a tokenizer.bin file
-python -c "
-from transformers import AutoTokenizer
-t = AutoTokenizer.from_pretrained('./my_finetuned_model')
-t.save_pretrained('./tokenizer_output')
-"
+```text
+hardware.getDeviceInfo()
+hardware.batteryLevel()
+hardware.readSensor("accelerometer", 1000)
+hardware.setFlashlight(true)
+hardware.vibrate(200)
+hardware.toast("Hello")
+hardware.speak("Hello")
+hardware.notify("Title", "Message")
+hardware.getLocation(5000)
+hardware.listCameras()
+hardware.readFile("data.txt")
+hardware.writeFile("data.txt", "content")
+hardware.startServer(8080)
 ```
 
-### Arm Learning Paths Followed
+Browser-preview pages do not receive the native `hardware` object. `listCameras()` reports camera IDs and capabilities; photo and video capture are not implemented.
 
-- [Build an Android chat app with Llama, KleidiAI, ExecuTorch, and XNNPACK](https://learn.arm.com/learning-paths/mobile-graphics-and-gaming/build-llama3-chat-android-app-using-executorch-and-xnnpack/)
-- [Measure LLM inference performance with KleidiAI and SME2 on Android](https://learn.arm.com/learning-paths/mobile-graphics-and-gaming/performance_llama_cpp_sme2/)
+## Build
 
-### Mobile Optimizations
+Requirements:
 
-| Optimization | Implementation | Impact |
-|---|---|---|
-| **INT4 quantization** | Model exported with KleidiAI INT4 kernels | ~75% model size reduction vs FP16 |
-| **Thread count tuning** | `BackendInfo.optimalThreadCount` — reserves cores for UI | Prevents UI jank during inference |
-| **Adaptive inference tuning** | `AdaptiveInferenceTuner` — reads battery, thermal, memory, CPU cores | Dynamic seqLen + thread count per device conditions |
-| **KV cache memory management** | `KvCacheManager` — estimates KV cache bytes, evicts or reduces seqLen | Prevents OOM during generation |
-| **Real-time benchmarking** | `InferenceBenchmark` — TTFT, tok/s, memory delta per generation | Visible per-message in AI chat panel |
-| **Role-specific context pruning** | `AgentContextPruner` — Architect/Coder/Validator get tailored context | Reduces token consumption, improves generation quality |
-| **Thermal awareness** | Battery temperature monitoring via `BatteryManager` | 5 strategies from Balanced to Thermal Emergency |
-| **Power saving mode** | Halves seqLen, reduces threads to 60% | Reduces battery drain |
-| **Adaptive cores** | Scales seqLen based on `availableProcessors` | Matches workload to device capability |
-| **Offline inference** | No network calls, all local | Privacy + zero latency from network |
-
-## Setup
-
-### Prerequisites
-
-- Android Studio (latest)
-- An Arm 64-bit Android device (API 26+) or an x86_64 emulator for testing
-- A compatible model file:
-  - `.pte` format (ExecuTorch) — requires a separate tokenizer file
-  - `.gguf` format (llama.cpp) — self-contained (tokenizer embedded)
-
-### Build
+- Android Studio with the Android SDK
+- Android API 26 or newer
+- An `arm64-v8a` device for real inference, or an `x86_64` emulator for UI and execution tests
+- A compatible `.gguf` model, or a `.pte` model and tokenizer
 
 ```bash
 git clone https://github.com/meowshmalloww/PocketIDE.git
@@ -176,298 +94,80 @@ cd PocketIDE
 ./gradlew assembleDebug
 ```
 
-### Run
+On Windows:
 
-1. Connect an Android device or start an emulator (API 26+)
-2. Install: `./gradlew installDebug`
-3. Open PocketIDE
-4. Go to **Settings** (gear icon in activity bar) → **On-Device Model** → enter the path to your `.pte` or `.gguf` model file (and tokenizer for `.pte`)
-5. Return to the editor, type a prompt in the AI Chat panel (e.g., "Write a function that prints Fibonacci numbers")
-6. The AI generates code on-device and inserts it into a new file
-7. Press the **Run** button in the Terminal panel to execute the code
-8. If execution fails, press **Repair** to have the AI fix the error and re-run
-
-### Obtaining a Model
-
-PocketIDE supports two model formats and offers in-app download from HuggingFace:
-
-**Option 1: Download from URL (in-app)**
-
-Go to **Settings → On-Device Model → Download from URL**, paste a HuggingFace direct download link, choose a prompt template, and tap Download. The model is saved to app-internal storage and auto-configured.
-
-URL format: `https://huggingface.co/<user>/<repo>/resolve/main/<file>.gguf`
-
-**Option 2: Manual file placement**
-
-**ExecuTorch (.pte)** — requires a separate tokenizer file:
-- Export with KleidiAI + XNNPACK for best Arm performance (see [Arm Optimization Pipeline](#arm-optimization-pipeline))
-- **Llama 3.2 1B Instruct** (INT4) — recommended for devices with 4GB+ RAM
-- **Qwen 3 0.6B** (INT4) — lighter alternative for budget devices
-- Export instructions: [ExecuTorch LLM Android docs](https://docs.pytorch.org/executorch/stable/llm/run-on-android.html)
-
-**llama.cpp (.gguf)** — self-contained (no tokenizer needed):
-- Any HuggingFace GGUF model (e.g., Llama 3.2 1B Instruct GGUF, Qwen 2.5 0.5B GGUF)
-- Download from [HuggingFace](https://huggingface.co/models?other=gguf)
-
-Place the model file(s) on your device's storage and point to them in Settings.
-
-## ES6-to-ES5 Transpilation
-
-Since the JavaScript runtime uses Mozilla Rhino (ES5 only), PocketIDE automatically transpiles modern JavaScript to ES5-compatible syntax before execution:
-
-- `let` / `const` → `var`
-- Arrow functions → `function` expressions
-- Template literals (backticks) → string concatenation
-- `for...of` loops → index-based `for` loops
-- Default parameters → `if (param === undefined)` checks
-- ES6+ polyfills injected: `Object.assign`, `Object.values`, `Object.entries`, `Array.prototype.find`, `Array.prototype.findIndex`, `Array.prototype.includes`, `Array.prototype.flat`, `String.prototype.includes`, `String.prototype.startsWith`, `String.prototype.endsWith`, `String.prototype.repeat`, `String.prototype.padStart`, `String.prototype.padEnd`, `Number.isInteger`, `Number.isNaN`
-
-Strings and comments are protected from transpilation to prevent code corruption.
-
-## Hardware API
-
-Any script (JavaScript, TypeScript, Python, Lua, Java) can call the on-device Android hardware bridge via the global `hardware` object. All methods are safe: no continuous listeners are kept alive after a call returns.
-
-### Method reference
-
-| Method | Description | Return |
-|---|---|---|
-| `hardware.toast(msg)` | Short toast | void |
-| `hardware.toastLong(msg)` | Long toast | void |
-| `hardware.vibrate(ms)` | Vibrate for N ms (default 200) | void |
-| `hardware.vibratePattern(timings)` | Vibrate a waveform pattern | void |
-| `hardware.setFlashlight(bool)` | Turn torch on/off | `true` if OK |
-| `hardware.batteryLevel()` | Battery percent 0..100 | Int (-1 if N/A) |
-| `hardware.batteryTemperature()` | Battery temp in °C | Float (25 if N/A) |
-| `hardware.isCharging()` | Charging status | Bool |
-| `hardware.clipboardGet()` | Read primary clipboard | String |
-| `hardware.clipboardSet(text)` | Write clipboard | void |
-| `hardware.screenBrightness()` | System brightness 0..255 | Int |
-| `hardware.setScreenBrightness(level)` | Set brightness 0..255 | Bool |
-| `hardware.keepScreenOn(bool)` | Keep screen awake or allow sleep | void |
-| `hardware.screenInfo()` | `Width: Xpx, Height: Ypx, Density: Zx` | String |
-| `hardware.networkType()` | `wifi` / `cellular` / `ethernet` / `none` | String |
-| `hardware.isOnline()` | Any transport active | Bool |
-| `hardware.storageFree()` | Free internal-storage bytes | Long |
-| `hardware.storageTotal()` | Total internal-storage bytes | Long |
-| `hardware.speak(text)` | Text-to-speech | Bool |
-| `hardware.stopSpeak()` | Stop TTS playback | void |
-| `hardware.playTone(freqHz, durationMs)` | Play an audio beep tone | void |
-| `hardware.notify(title, text)` | Show a system notification | Bool |
-| `hardware.getLocation(timeoutMs)` | One-shot GPS read (lat,lng,accuracy) | String |
-| `hardware.listBluetooth()` | List paired Bluetooth devices | String |
-| `hardware.readFile(path)` | Read file from app sandbox | String |
-| `hardware.writeFile(path, content)` | Write file to app sandbox | Bool |
-| `hardware.listFiles(path)` | List files in sandbox directory | String |
-| `hardware.deleteFile(path)` | Delete file from sandbox | Bool |
-| `hardware.sandboxPath()` | Get sandbox root path | String |
-| `hardware.startServer(port)` | Start localhost HTTP server | String (URL) |
-| `hardware.stopServer()` | Stop HTTP server | void |
-| `hardware.isServerRunning()` | Check if HTTP server is running | Bool |
-| `hardware.readSensor(type, ms)` | One-shot sensor read | String (CSV of values) |
-| `hardware.listSensors()` | Available sensors | String |
-| `hardware.listCameras()` | Camera IDs + capabilities | String |
-| `hardware.openUrl(url)` | Open URL in browser | Bool |
-| `hardware.getDeviceInfo()` | Full device summary | String |
-
-Sensor types accepted by `readSensor`: `accelerometer`, `gyroscope`, `light`, `pressure`, `proximity`, `magnetic`.
-
-### Examples
-
-**JavaScript** — turn on flashlight for 3 seconds, then buzz:
-```javascript
-hardware.setFlashlight(true);
-hardware.toast("Flashlight ON");
-java.lang.Thread.sleep(3000);
-hardware.setFlashlight(false);
-hardware.vibrate(500);
-console.log("Battery: " + hardware.batteryLevel() + "%");
+```powershell
+.\gradlew.bat assembleDebug
 ```
 
-**Python** — clipboard round-trip + TTS:
-```python
-hardware.clipboardSet("Hello from PocketIDE!")
-print(hardware.clipboardGet())
-hardware.speak("Hello from PocketIDE!")
-print("Online:", hardware.isOnline())
+The debug APK is generated at:
+
+```text
+app/build/outputs/apk/debug/app-debug.apk
 ```
 
-**Lua** — read the accelerometer + vibrate pattern:
-```lua
-local reading = hardware.readSensor("accelerometer", 1000)
-print("Accelerometer:", reading)
-hardware.vibratePattern({0, 200, 100, 400})
-hardware.toast("Battery " .. hardware.batteryLevel() .. "%")
+Install it with Android Studio, `installDebug`, or ADB:
+
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-**Java** (BeanShell) — device dashboard + notification:
-```java
-System.out.println(hardware.getDeviceInfo());
-if (hardware.batteryLevel() < 20 && !hardware.isCharging()) {
-    hardware.notify("Battery Low", "Plug in your charger!");
-}
+## Configure a model
+
+1. Copy or download a compatible model onto the phone.
+2. Open **Settings → On-Device Model → Add Model**.
+3. Select the `.gguf` or `.pte` file with Android's document picker.
+4. For `.pte`, also select its tokenizer file.
+5. Select the imported model as active.
+
+Models are not bundled in the repository or APK.
+
+## Try it
+
+Generate and run an interactive Python project:
+
+```text
+Build a two-file Python expense tracker using main.py and storage.py. Include an
+interactive terminal menu, input validation, JSON persistence, and summaries by
+category. Do not create a calculator.
 ```
 
-**JavaScript** — localhost HTTP server + file I/O:
-```javascript
-hardware.writeFile("www/index.html", "<h1>Hello from PocketIDE!</h1>");
-var url = hardware.startServer(8080);
-console.log("Server running at: " + url);
-console.log("Files: " + hardware.listFiles("www"));
+Generate a local browser project:
+
+```text
+Build a three-file emergency checklist using index.html, styles.css, and app.ts.
+Include priorities, filters, completion statistics, and localStorage persistence.
+Use no frameworks or network access.
 ```
 
-### Permissions
+To calibrate inference, open AI Chat, tap the benchmark button, run the suite, and export the text and JSON reports.
 
-The manifest declares: `VIBRATE`, `CAMERA`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`, `BLUETOOTH`, `BLUETOOTH_CONNECT`, `POST_NOTIFICATIONS`, `WRITE_SETTINGS`, `WAKE_LOCK`, `RECORD_AUDIO`, `HIGH_SAMPLING_RATE_SENSORS`. Sensors, network status, battery, clipboard, and storage stats require no runtime permissions.
+## Verification
 
-## Project Structure
-
-```
-PocketIDE/
-├── app/src/main/java/com/pocketide/
-│   ├── MainActivity.kt                      # Entry point
-│   ├── data/
-│   │   ├── ai/
-│   │   │   ├── AdaptiveInferenceTuner.kt    # Dynamic tuning (thermal, battery, memory, cores)
-│   │   │   ├── AgentContextPruner.kt        # Role-specific context pruning for SWARM
-│   │   │   ├── AiConfig.kt                  # Model config data class + enums
-│   │   │   ├── AiConfigRepository.kt        # SharedPreferences persistence
-│   │   │   ├── AiService.kt                 # On-device inference orchestrator (3-stage pipeline)
-│   │   │   ├── AiResponseParser.kt          # PLAN/FILENAME/code-block parser
-│   │   │   ├── BackendInfo.kt               # Arm CPU feature detection (XNNPACK/KleidiAI)
-│   │   │   ├── ContextManager.kt           # Context window management (sliding window, compression, RAG)
-│   │   │   ├── ExecutorchLlmRunner.kt       # ExecuTorch LlmModule wrapper
-│   │   │   ├── InferenceBenchmark.kt        # Real-time TTFT, tok/s, memory delta measurement
-│   │   │   ├── KvCacheManager.kt            # KV cache memory estimation + eviction strategy
-│   │   │   ├── LlamaCppRunner.kt            # llama.cpp GGUF wrapper
-│   │   │   ├── LlmRunner.kt                 # Unified runner interface + dispatcher
-│   │   │   ├── ModelDownloader.kt           # HuggingFace model download with progress
-│   │   │   └── PromptFormatter.kt           # Llama 3 / Qwen / Plain templates
-│   │   ├── execution/
-│   │   │   └── CodeExecutor.kt              # Multi-language code execution (7 languages)
-│   │   ├── hardware/
-│   │   │   └── HardwareBridge.kt            # 30+ hardware APIs (flashlight, GPS, TTS, bluetooth, camera, sensors, file I/O, HTTP server, notifications, screen control, audio, vibration)
-│   │   ├── model/                           # Data classes (Language, CodeFile, ChatMessage, etc.)
-│   │   └── repository/                      # File I/O on internal storage
-│   └── ui/
-│       ├── components/                      # ActivityBar, AiChatPanel, TerminalPanel, TopTabBar, etc.
-│       ├── editor/                          # CodeEditorField + SyntaxHighlighter
-│       ├── navigation/                      # NavHost routes
-│       ├── screens/
-│       │   ├── editor/                      # EditorScreen + EditorViewModel + EditorUiState
-│       │   ├── settings/                    # SettingsScreen
-│       │   └── benchmark/                   # (Reserved for benchmark screen)
-│       └── theme/                           # Colors, typography, theme ViewModel
-├── app/src/test/java/com/pocketide/
-│   ├── data/ai/
-│   │   ├── AdaptiveInferenceTunerTest.kt    # 5 tests (null context, power saving, thermal, adaptive cores, all flags)
-│   │   ├── AgentContextPrunerTest.kt        # 5 tests (architect, coder, validator, empty history, large context)
-│   │   ├── AiResponseParserTest.kt          # Response parsing tests
-│   │   ├── InferenceBenchmarkTest.kt        # 4 tests (no tokens, token counting, summary, JSON)
-│   │   └── KvCacheManagerTest.kt            # 10 tests (estimation, memory check, proceed/reduce/reset, reset, forModelSize)
-│   ├── data/execution/
-│   │   └── CodeExecutorTest.kt              # Multi-language execution tests
-│   └── ui/editor/
-│       └── SyntaxHighlighterTest.kt         # Syntax highlighting tests
-├── docs/                                    # Progress, decisions, planning documents
-├── gradle/libs.versions.toml                # Version catalog
-└── README.md
+```bash
+./gradlew testDebugUnitTest
+./gradlew lintDebug
+./gradlew assembleDebug
+./gradlew connectedDebugAndroidTest
 ```
 
-## SWARM Mode (Multi-Agent Pipeline)
+Current verification:
 
-When **SWARM** mode is selected in the AI chat panel, PocketIDE orchestrates a multi-agent pipeline that mirrors a real development team:
+- 114 JVM/Robolectric tests passed
+- 9 Android instrumented tests passed
+- Debug lint passed
+- Debug APK assembly passed
 
-### Pipeline Steps
+Physical-device testing instructions are in [docs/PHYSICAL_DEVICE_TEST_PLAN.md](docs/PHYSICAL_DEVICE_TEST_PLAN.md).
 
-1. **Architect** — Receives the user's request and generates a high-level plan (what files to create, what approach to take, which language to use).
-2. **Coder** — Takes the Architect's plan and generates the actual code following the PLAN/FILENAME/code block format.
-3. **Auto-Execute** — The generated code is automatically executed in the sandbox.
-4. **Validator (Autonomous Repair Loop)** — If execution fails, the Validator sends the error details (error type, line, column, stderr) back to the AI for repair. This loop repeats up to `maxRepairIterations` times (configurable in Settings, default 3) or until the code executes successfully.
+## Main technologies
 
-### Agent Status Indicators
-
-Each agent's status is displayed in real-time via status badges in the chat panel:
-- **IDLE** — Agent hasn't started yet
-- **LOADING/GENERATING** — Agent is actively working
-- **DONE** — Agent completed successfully
-- **ERROR** — Agent encountered an error
-
-### Single vs. Swarm Mode
-
-| Feature | Single Model | Swarm Agent |
-|---|---|---|
-| Pipeline | One AI call → response | Architect → Coder → Validator |
-| Auto-execute | No | Yes (after Coder generates) |
-| Auto-repair | Manual (Repair button) | Autonomous (up to N iterations) |
-| Best for | Quick code, questions, plans | Complex apps, multi-step tasks |
-
-## Context Window Management
-
-Small on-device LLMs (0.5B–7B) typically support 2K–8K tokens of context. PocketIDE includes a **ContextManager** that intelligently manages this limited budget to handle complex, multi-file projects.
-
-### How It Works
-
-1. **Token Estimation** — Rough heuristic (~4 chars/token) to budget context allocation.
-2. **Sliding Window** — Keeps the most recent conversation messages intact; older messages are dropped when the budget is exceeded.
-3. **History Summarization** — Dropped messages are compressed into a single summary line (e.g., "User asked: create a calculator app...") so the AI retains context without consuming the full token budget.
-4. **Code Context Injection (RAG-style)** — Snippets of open project files are injected into the system prompt:
-   - The **active file** gets full content included (or truncated if too large).
-   - **Other files** get summaries (first 15 lines + line count).
-   - This gives the AI multi-file awareness without exceeding the context window.
-5. **Token Budget Allocation** — The context window is divided across:
-   - System prompt (always included in full)
-   - Code context (40% of remaining budget)
-   - Conversation history (60% of remaining budget)
-   - User message (always included in full)
-   - Response generation (25% of window, capped at 2048 tokens)
-
-### Configurable Settings
-
-| Setting | Default | Range | Description |
-|---|---|---|---|
-| Context window size | 4096 | 2K–128K | Match to your model's context length |
-| Inject code context | On | On/Off | Include open file snippets in prompts |
-| Summarize old history | On | On/Off | Compress dropped messages into summaries |
-
-### Supported Context Window Sizes
-
-The slider in Settings offers these presets: **2K, 4K, 8K, 16K, 32K, 64K, 128K** tokens.
-
-For models like Qwen 2.5 0.5B (32K context) or Llama 3.2 1B (128K context), set the context window size to match. The ContextManager will then include more conversation history and code context, enabling the AI to handle larger, more complex projects.
-
-> **Note:** Setting a context window larger than what the model actually supports will cause the model to truncate or ignore excess tokens. Always match this to your model's documented context length.
-
-## Roadmap
-
-### Completed
-
-- **Adaptive performance** — `AdaptiveInferenceTuner` reads thermal state, battery, memory, and CPU cores to dynamically adjust seqLen and thread count with 5 strategies
-- **KV cache memory management** — `KvCacheManager` estimates KV cache memory and triggers eviction or seqLen reduction to prevent OOM
-- **Real-time benchmarking** — `InferenceBenchmark` measures TTFT, tok/s, memory delta per generation, displayed in AI chat panel
-- **Role-specific context pruning** — `AgentContextPruner` tailors context for Architect, Coder, and Validator agents in SWARM mode
-- **Hardware bridge expansion** — 30+ Android hardware APIs: TTS, notifications, GPS, Bluetooth, file I/O, localhost HTTP server, camera info, screen control, audio tone, vibration patterns
-- **Unit tests** — 28 tests covering all 4 AI optimization components, plus existing tests for CodeExecutor, AiResponseParser, and SyntaxHighlighter
-
-### Planned
-
-- **Settings file picker** — SAF `OpenDocument` contract to browse and select model files
-- **Benchmark screen** — parse `statsJson` from ExecuTorch (tokens/sec, TTFT, peak memory) and render charts
-- **Sora Editor integration** — replace custom `BasicTextField` with full-featured Sora editor (auto-complete, bracket matching, find/replace)
-- **Model bundling** — ship a small default model in APK assets for zero-config setup
-- **Python interpreter** — bundled Python 3 interpreter for native execution instead of JS transpilation
+- Kotlin and Jetpack Compose
+- llama.cpp through KotlinLlamaCpp
+- ExecuTorch
+- CPython through Chaquopy
+- Rhino, LuaJ, BeanShell, SQLite, and NanoHTTPD
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE)
-
-## Acknowledgments
-
-- [ExecuTorch](https://github.com/pytorch/executorch) — PyTorch on-device inference framework
-- [kotlinllamacpp](https://github.com/ljcamargo/kotlinllamacpp) — Kotlin bindings for llama.cpp
-- [Mozilla Rhino](https://github.com/mozilla/rhino) — JavaScript engine for Java
-- [LuaJ](https://github.com/luaj/luaj) — Lua interpreter for Java
-- [BeanShell](https://github.com/beanshell/beanshell) — Java scripting interpreter
-- [NanoHTTPD](https://github.com/NanoHttpd/nanohttpd) — Embedded HTTP server for localhost web testing
-- [Robolectric](https://github.com/robolectric/robolectric) — Android unit testing framework
-- [Jetpack Compose](https://developer.android.com/jetpack/compose) — Declarative UI toolkit
+Apache License 2.0. See [LICENSE](LICENSE).

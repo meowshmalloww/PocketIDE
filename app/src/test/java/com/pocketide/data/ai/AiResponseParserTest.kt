@@ -220,4 +220,27 @@ class AiResponseParserTest {
 
         assertEquals("Trimmed plan", parsed.plan)
     }
+
+    @Test
+    fun `parses multiple generated files`() {
+        val parsed = parseAiResponse(
+            """
+            PLAN: Split calculator logic from its entry point
+            FILE: calculator.py
+            ```python
+            def add(a, b): return a + b
+            ```
+            FILE: main.py
+            ```python
+            from calculator import add
+            print(add(2, 3))
+            ```
+            """.trimIndent(),
+        )
+
+        assertEquals(2, parsed.files.size)
+        assertEquals("calculator.py", parsed.files[0].filename)
+        assertEquals("main.py", parsed.files[1].filename)
+        assertEquals(Language.PYTHON, parsed.files[1].language)
+    }
 }

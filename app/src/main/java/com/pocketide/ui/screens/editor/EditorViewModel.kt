@@ -1,32 +1,52 @@
 package com.pocketide.ui.screens.editor
 
 import android.app.Application
+import android.content.Intent
+import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pocketide.data.ai.AiConfigRepository
 import com.pocketide.data.ai.AiResult
 import com.pocketide.data.ai.AiService
+import com.pocketide.data.ai.BackendInfo
+import com.pocketide.data.ai.BenchmarkRunOptions
 import com.pocketide.data.ai.ChatTurn
 import com.pocketide.data.ai.ContextManager
 import com.pocketide.data.ai.ExecutorchLlmRunner
 import com.pocketide.data.ai.LlamaCppRunner
+import com.pocketide.data.ai.ModelFormat
+import com.pocketide.data.ai.ThreadCalibrationRepository
+import com.pocketide.data.ai.ThreadProfileSample
+import com.pocketide.data.ai.ThreadProfileSelector
 import com.pocketide.data.ai.parseAiResponse
 import com.pocketide.data.execution.CodeExecutor
+import com.pocketide.data.execution.ExecutionConsole
+import com.pocketide.data.execution.ExecutionRequest
+import com.pocketide.data.execution.ProjectPreviewServer
 import com.pocketide.data.model.AgentStatus
 import com.pocketide.data.model.AiMode
 import com.pocketide.data.model.ChatMessage
+import com.pocketide.data.model.ChatSessionSummary
 import com.pocketide.data.model.CodeFile
 import com.pocketide.data.model.ExecutionStatus
 import com.pocketide.data.model.Language
 import com.pocketide.data.model.MessageRole
 import com.pocketide.data.model.ModelMode
 import com.pocketide.data.repository.FileRepository
+import com.pocketide.data.repository.ChatHistoryRepository
 import com.pocketide.ui.components.ActivityTab
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import java.util.UUID
+import java.util.Locale
 
 data class EditorUiState(
     val messages: List<ChatMessage> = emptyList(),
@@ -62,32 +82,79 @@ data class EditorUiState(
     val lastTtftMs: Long? = null,
     val lastMemoryDeltaMb: Float? = null,
     val lastStrategy: String? = null,
+    val lastPipelineLog: String? = null,
+    val benchmarkReport: String? = null,
+    val benchmarkJson: String? = null,
+    val benchmarkRunning: Boolean = false,
+    val benchmarkCompletedRuns: Int = 0,
+    val benchmarkTotalRuns: Int = 0,
+    val benchmarkSummary: String? = null,
+    val benchmarkError: String? = null,
+    val chatSessions: List<ChatSessionSummary> = emptyList(),
+    val activeChatSessionId: String = UUID.randomUUID().toString(),
+    val previewUrl: String? = null,
+    val waitingForInput: Boolean = false,
+    val inputPrompt: String = "",
 )
 
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = FileRepository(application)
     private val codeExecutor = CodeExecutor(application)
+    private val previewServer = ProjectPreviewServer(codeExecutor)
     private val aiConfigRepository = AiConfigRepository(application)
+    private val threadCalibrationRepository = ThreadCalibrationRepository(application)
+    private val chatHistoryRepository = ChatHistoryRepository(application)
     private val executorchRunner = ExecutorchLlmRunner()
     private val llamaCppRunner = LlamaCppRunner(application)
     private val _state = MutableStateFlow(EditorUiState())
     val state: StateFlow<EditorUiState> = _state.asStateFlow()
     private var cachedService: AiService? = null
     private var cachedConfigHash: Int = 0
+    private var activeExecutionConsole: ExecutionConsole? = null
 
     override fun onCleared() {
-        super.onCleared()
-        // Release native LLM resources when the ViewModel is destroyed.
-        viewModelScope.launch {
+        activeExecutionConsole?.cancel()
+        // viewModelScope is already being cancelled during clear, so native cleanup uses a short-lived independent scope.
+        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             executorchRunner.release()
             llamaCppRunner.release()
         }
+        previewServer.stop()
+        super.onCleared()
     }
 
     init {
         loadProjects()
         loadFiles()
+        loadChatHistory()
+        observeChatHistory()
+    }
+
+    private data class PersistedChatSnapshot(
+        val id: String,
+        val projectName: String,
+        val messages: List<ChatMessage>,
+    )
+
+    private fun observeChatHistory() {
+        viewModelScope.launch {
+            state.map { PersistedChatSnapshot(it.activeChatSessionId, it.projectName, it.messages) }
+                .distinctUntilChanged()
+                .collect { snapshot ->
+                    if (snapshot.messages.isNotEmpty()) {
+                        chatHistoryRepository.save(snapshot.id, snapshot.projectName, snapshot.messages)
+                        val sessions = chatHistoryRepository.list()
+                        _state.update { it.copy(chatSessions = sessions) }
+                    }
+                }
+        }
+    }
+
+    private fun loadChatHistory() {
+        viewModelScope.launch {
+            _state.update { it.copy(chatSessions = chatHistoryRepository.list()) }
+        }
     }
 
     private fun loadProjects() {
@@ -123,6 +190,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     activeFileIndex = 0,
                     activeFileContent = "",
                     messages = emptyList(),
+                    activeChatSessionId = UUID.randomUUID().toString(),
                     stdout = "",
                     stderr = "",
                     executionStatus = ExecutionStatus.IDLE,
@@ -147,6 +215,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     activeFileIndex = 0,
                     activeFileContent = "",
                     messages = emptyList(),
+                    activeChatSessionId = UUID.randomUUID().toString(),
                     stdout = "",
                     stderr = "",
                     executionStatus = ExecutionStatus.IDLE,
@@ -172,6 +241,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         activeFileIndex = 0,
                         activeFileContent = "",
                         messages = emptyList(),
+                        activeChatSessionId = UUID.randomUUID().toString(),
                         stdout = "",
                         stderr = "",
                         executionStatus = ExecutionStatus.IDLE,
@@ -238,6 +308,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         _state.update {
             it.copy(
                 messages = emptyList(),
+                activeChatSessionId = UUID.randomUUID().toString(),
                 inputText = "",
                 isGenerating = false,
                 isThinking = false,
@@ -245,10 +316,44 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 lastTtftMs = null,
                 lastMemoryDeltaMb = null,
                 lastStrategy = null,
+                lastPipelineLog = null,
                 architectStatus = AgentStatus.IDLE,
                 coderStatus = AgentStatus.IDLE,
                 validatorStatus = AgentStatus.IDLE,
             )
+        }
+    }
+
+    fun openChatSession(id: String) {
+        viewModelScope.launch {
+            val session = chatHistoryRepository.load(id) ?: return@launch
+            _state.update {
+                it.copy(
+                    messages = session.messages,
+                    activeChatSessionId = session.summary.id,
+                    inputText = "",
+                    isGenerating = false,
+                    isThinking = false,
+                )
+            }
+        }
+    }
+
+    fun deleteChatSession(id: String) {
+        viewModelScope.launch {
+            chatHistoryRepository.delete(id)
+            val sessions = chatHistoryRepository.list()
+            _state.update {
+                if (it.activeChatSessionId == id) {
+                    it.copy(
+                        messages = emptyList(),
+                        activeChatSessionId = UUID.randomUUID().toString(),
+                        chatSessions = sessions,
+                    )
+                } else {
+                    it.copy(chatSessions = sessions)
+                }
+            }
         }
     }
 
@@ -261,7 +366,226 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         return service
     }
 
+    fun exportBenchmarkReport(): String {
+        val service = cachedService ?: return "No AI session active. Generate some code first."
+        return service.session.exportReport()
+    }
+
+    fun exportBenchmarkJson(): String {
+        val service = cachedService ?: return "{}"
+        return service.session.exportJson()
+    }
+
+    fun copyBenchmarkReportToClipboard() {
+        val report = exportBenchmarkReport()
+        val clipboard = getApplication<Application>().getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as android.content.ClipboardManager
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("PocketIDE Benchmark", report))
+        android.widget.Toast.makeText(
+            getApplication(),
+            "Benchmark report copied to clipboard (${report.length} chars)",
+            android.widget.Toast.LENGTH_LONG,
+        ).show()
+        _state.update { it.copy(benchmarkReport = report) }
+    }
+
+    fun copyBenchmarkJsonToClipboard() {
+        val json = exportBenchmarkJson()
+        val clipboard = getApplication<Application>().getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as android.content.ClipboardManager
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("PocketIDE Benchmark JSON", json))
+        android.widget.Toast.makeText(getApplication(), "Benchmark JSON copied", android.widget.Toast.LENGTH_SHORT).show()
+        _state.update { it.copy(benchmarkJson = json) }
+    }
+
+    /** Measures real decode profiles and saves the best thread count for this device and GGUF model. */
+    fun runBenchmarkSuite() {
+        if (_state.value.benchmarkRunning) return
+        if (_state.value.isGenerating) {
+            _state.update { it.copy(benchmarkError = "Wait for the current AI response to finish.") }
+            return
+        }
+        _state.update {
+            it.copy(
+                benchmarkRunning = true,
+                benchmarkCompletedRuns = 0,
+                benchmarkTotalRuns = 0,
+                benchmarkError = null,
+                benchmarkSummary = null,
+            )
+        }
+        viewModelScope.launch {
+            val config = aiConfigRepository.load()
+            if (!config.isConfigured) {
+                _state.update {
+                    it.copy(benchmarkRunning = false, benchmarkError = "Add an on-device model in Settings first.")
+                }
+                return@launch
+            }
+            val activeModel = config.activeModel
+            if (activeModel?.format != ModelFormat.GGUF) {
+                _state.update {
+                    it.copy(
+                        benchmarkRunning = false,
+                        benchmarkError = "Thread calibration currently requires a GGUF llama.cpp model.",
+                    )
+                }
+                return@launch
+            }
+            val service = getService(config)
+            service.session.clear()
+            val cpuCores = Runtime.getRuntime().availableProcessors()
+            val heuristicThreads = BackendInfo.optimalThreadCount.coerceIn(1, cpuCores)
+            val candidateThreads = buildSet {
+                addAll(1..minOf(4, cpuCores))
+                add(heuristicThreads)
+            }.sorted()
+            val plan = buildList {
+                candidateThreads.forEach { threads ->
+                    add(BenchmarkPlan("T$threads", threads, true))
+                    repeat(3) { add(BenchmarkPlan("T$threads", threads, false)) }
+                }
+            }
+            _state.update { it.copy(benchmarkTotalRuns = plan.size) }
+            val measured = mutableListOf<ThreadProfileSample>()
+            plan.forEachIndexed { index, run ->
+                val result = service.chatCompletion(
+                    systemPrompt = BENCHMARK_SYSTEM_PROMPT,
+                    history = emptyList(),
+                    userMessage = BENCHMARK_FIXED_PROMPT,
+                    benchmarkOptions = BenchmarkRunOptions(
+                        profile = run.profile,
+                        threadCount = run.threads,
+                        isWarmup = run.warmup,
+                    ),
+                )
+                if (result is AiResult.Error) {
+                    _state.update {
+                        it.copy(
+                            benchmarkRunning = false,
+                            benchmarkError = "Run ${index + 1} failed: ${result.message}",
+                        )
+                    }
+                    return@launch
+                }
+                val benchmark = (result as AiResult.Success).benchmark
+                if (!run.warmup && benchmark != null) {
+                    measured += ThreadProfileSample(
+                        threadCount = run.threads,
+                        tokensPerSecond = benchmark.tokensPerSecond,
+                        ttftMs = benchmark.ttftMs,
+                        peakProcessPssBytes = benchmark.peakProcessPssBytes,
+                    )
+                }
+                _state.update { it.copy(benchmarkCompletedRuns = index + 1) }
+            }
+
+            val calibration = ThreadProfileSelector.select(measured)
+            val summary = if (calibration == null) {
+                "No valid measured generations were recorded."
+            } else {
+                threadCalibrationRepository.save(activeModel.modelPath, calibration)
+                service.session.setThreadCalibration(heuristicThreads, calibration)
+                val heuristicProfile = ThreadProfileSelector.select(
+                    measured.filter { it.threadCount == heuristicThreads },
+                )
+                val heuristicTps = heuristicProfile?.medianTokensPerSecond ?: 0f
+                val delta = if (heuristicTps > 0f) {
+                    (calibration.medianTokensPerSecond / heuristicTps - 1f) * 100f
+                } else {
+                    0f
+                }
+                String.format(
+                    Locale.US,
+                    "Selected %d thread(s): %.2f tok/s median (%+.1f%% vs %d-thread heuristic) · TTFT %d ms · saved for normal chat",
+                    calibration.threadCount,
+                    calibration.medianTokensPerSecond,
+                    delta,
+                    heuristicThreads,
+                    calibration.averageTtftMs,
+                )
+            }
+            val report = service.session.exportReport()
+            val json = service.session.exportJson()
+            _state.update {
+                it.copy(
+                    benchmarkRunning = false,
+                    benchmarkSummary = summary,
+                    benchmarkReport = report,
+                    benchmarkJson = json,
+                )
+            }
+        }
+    }
+
+    fun clearBenchmark() {
+        cachedService?.session?.clear()
+        _state.update {
+            it.copy(
+                benchmarkCompletedRuns = 0,
+                benchmarkSummary = null,
+                benchmarkError = null,
+                benchmarkReport = null,
+                benchmarkJson = null,
+            )
+        }
+    }
+
+    fun previewWebProject() {
+        val snapshot = _state.value
+        val activeFile = snapshot.files.getOrNull(snapshot.activeFileIndex)
+        if (snapshot.files.none { it.language.supportsWebPreview }) {
+            _state.update {
+                it.copy(
+                    executionStatus = ExecutionStatus.FAILED,
+                    stderr = "Web preview needs an HTML, CSS, JavaScript, or TypeScript file.",
+                    terminalExpanded = true,
+                )
+            }
+            return
+        }
+        previewServer.start(snapshot.files, activeFile)
+            .onSuccess { url ->
+                val intent = Intent(Intent.ACTION_VIEW, url.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                runCatching { getApplication<Application>().startActivity(intent) }
+                    .onSuccess {
+                        _state.update {
+                            it.copy(
+                                previewUrl = url,
+                                executionStatus = ExecutionStatus.PASSED,
+                                stdout = "Preview running at $url\nThe server is restricted to this device.",
+                                stderr = "",
+                                warnings = "",
+                                errorLine = null,
+                                errorColumn = null,
+                                errorType = null,
+                                executionDurationMs = 0,
+                                terminalExpanded = true,
+                            )
+                        }
+                    }
+                    .onFailure { error -> showPreviewError(error.message ?: "No browser is available") }
+            }
+            .onFailure { error -> showPreviewError(error.message ?: "Could not start preview") }
+    }
+
+    private fun showPreviewError(message: String) {
+        _state.update {
+            it.copy(
+                executionStatus = ExecutionStatus.FAILED,
+                stderr = "Web preview failed: $message",
+                warnings = "",
+                errorLine = null,
+                errorColumn = null,
+                errorType = "PreviewError",
+                executionDurationMs = 0,
+                terminalExpanded = true,
+            )
+        }
+    }
+
     fun sendMessage() {
+        if (_state.value.benchmarkRunning || _state.value.isGenerating) return
         val prompt = _state.value.inputText.trim()
         if (prompt.isBlank()) return
 
@@ -293,7 +617,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             val config = aiConfigRepository.load()
             val service = getService(config)
             val systemPrompt = when (currentMode) {
-                AiMode.CODE -> if (currentModelMode == ModelMode.SWARM) ARCHITECT_SYSTEM_PROMPT else CODE_MODE_PROMPT
+                AiMode.CODE -> if (currentModelMode == ModelMode.SWARM) ARCHITECT_SYSTEM_PROMPT else CODE_MODE_PROMPT_V2
                 AiMode.ASK -> ASK_MODE_PROMPT
                 AiMode.PLAN -> PLAN_MODE_PROMPT
             }
@@ -326,12 +650,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             )
 
             val elapsedSec = (System.currentTimeMillis() - startTime) / 1000f
-            val tps = if (elapsedSec > 0f) tokenCount / elapsedSec else null
+            val callbackTps = if (elapsedSec > 0f) tokenCount / elapsedSec else null
+            val tps = (result as? AiResult.Success)?.benchmark?.tokensPerSecond
+                ?.takeIf { it > 0f }
+                ?: callbackTps
             val benchTtft = (result as? AiResult.Success)?.benchmark?.ttftMs?.takeIf { it >= 0 }
             val benchMemDelta = (result as? AiResult.Success)?.benchmark?.let {
                 (it.memoryDeltaBytes / (1024f * 1024f))
             }
             val benchStrategy = (result as? AiResult.Success)?.tuning?.strategy?.displayName
+            val benchPipelineLog = (result as? AiResult.Success)?.pipelineLog
 
             when (result) {
                 is AiResult.Error -> _state.update {
@@ -374,6 +702,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                                 lastTtftMs = benchTtft,
                                 lastMemoryDeltaMb = benchMemDelta,
                                 lastStrategy = benchStrategy,
+                                lastPipelineLog = benchPipelineLog,
                             )
                         }
                         AiMode.PLAN -> _state.update {
@@ -394,6 +723,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                                 lastTtftMs = benchTtft,
                                 lastMemoryDeltaMb = benchMemDelta,
                                 lastStrategy = benchStrategy,
+                                lastPipelineLog = benchPipelineLog,
                             )
                         }
                     }
@@ -438,7 +768,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         val coderManaged = ContextManager.buildContext(
-            systemPrompt = CODER_SYSTEM_PROMPT,
+            systemPrompt = CODER_SYSTEM_PROMPT_V2,
             history = emptyList(),
             userMessage = coderUserMessage,
             files = _state.value.files,
@@ -461,9 +791,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 coderTokens++
             },
         )
-        val coderTps = ((System.currentTimeMillis() - coderStart) / 1000f).let { el ->
+        val callbackCoderTps = ((System.currentTimeMillis() - coderStart) / 1000f).let { el ->
             if (el > 0f) coderTokens / el else null
         }
+        val coderTps = (coderResult as? AiResult.Success)?.benchmark?.tokensPerSecond
+            ?.takeIf { it > 0f }
+            ?: callbackCoderTps
 
         when (coderResult) {
             is AiResult.Error -> {
@@ -687,38 +1020,63 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             )
         }
 
-        val code = parsed.code
-        val language = parsed.language
-        if (code == null || language == null) {
+        val generatedFiles = parsed.files.ifEmpty {
+            val code = parsed.code
+            val language = parsed.language
+            if (code == null || language == null) emptyList() else listOf(
+                com.pocketide.data.ai.ParsedAiFile(
+                    filename = parsed.filename ?: "main.${language.fileExtension}",
+                    code = code,
+                    language = language,
+                ),
+            )
+        }
+        if (generatedFiles.isEmpty()) {
             _state.update { it.copy(isGenerating = false) }
             return
         }
 
-        val filename = parsed.filename ?: "main.${language.fileExtension}"
         val s = _state.value
-        val existingIndex = s.files.indexOfFirst { it.name == filename }
         val newFiles = s.files.toMutableList()
-        val targetIndex: Int
-        if (existingIndex >= 0) {
-            newFiles[existingIndex] = newFiles[existingIndex].copy(content = code, isModified = true)
-            targetIndex = existingIndex
-        } else {
-            newFiles.add(CodeFile(name = filename, language = language, content = code, isModified = true))
-            targetIndex = newFiles.size - 1
+        var targetIndex = s.activeFileIndex.coerceIn(0, newFiles.lastIndex.coerceAtLeast(0))
+        generatedFiles.forEach { generated ->
+            val existingIndex = newFiles.indexOfFirst { it.name == generated.filename }
+            if (existingIndex >= 0) {
+                newFiles[existingIndex] = newFiles[existingIndex].copy(
+                    language = generated.language,
+                    content = generated.code,
+                    isModified = true,
+                )
+                targetIndex = existingIndex
+            } else {
+                newFiles.add(
+                    CodeFile(
+                        name = generated.filename,
+                        language = generated.language,
+                        content = generated.code,
+                        isModified = true,
+                    ),
+                )
+                targetIndex = newFiles.lastIndex
+            }
+        }
+        val activeGenerated = newFiles[targetIndex]
+        val generatedMessage = generatedFiles.joinToString("\n\n") { generated ->
+            "Generated ${generated.filename}:\n```${generated.language.fileExtension}\n${generated.code}\n```"
         }
 
         _state.update {
             it.copy(
                 messages = it.messages + ChatMessage(
                     role = MessageRole.CODER,
-                    content = "Generated $filename:\n```${language.fileExtension}\n$code\n```",
+                    content = generatedMessage,
                     agentStatus = AgentStatus.DONE,
                     tokensPerSecond = tokensPerSecond,
                 ),
                 coderStatus = AgentStatus.DONE,
                 files = newFiles,
                 activeFileIndex = targetIndex,
-                activeFileContent = code,
+                activeFileContent = activeGenerated.content,
                 isGenerating = false,
                 isThinking = false,
                 lastTokensPerSecond = tokensPerSecond,
@@ -727,7 +1085,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         viewModelScope.launch {
-            repository.saveFile(s.projectName, newFiles[targetIndex])
+            repository.saveFiles(s.projectName, newFiles)
         }
     }
 
@@ -856,6 +1214,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun runCode() {
+        if (_state.value.executionStatus == ExecutionStatus.RUNNING) return
         val s = _state.value
         val activeFile = s.files.getOrNull(s.activeFileIndex)
         if (activeFile == null) return
@@ -870,11 +1229,31 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 errorColumn = null,
                 errorType = null,
                 terminalExpanded = true,
+                waitingForInput = false,
+                inputPrompt = "",
             )
         }
 
         viewModelScope.launch {
-            val result = codeExecutor.execute(activeFile.content, activeFile.language)
+            repository.saveFiles(s.projectName, s.files)
+            val console = ExecutionConsole(
+                onStdout = { chunk -> _state.update { it.copy(stdout = it.stdout + chunk) } },
+                onStderr = { chunk -> _state.update { it.copy(stderr = it.stderr + chunk) } },
+                onInputRequested = { prompt ->
+                    _state.update { it.copy(waitingForInput = prompt.isNotEmpty() || activeExecutionConsole?.waitingForInput == true, inputPrompt = prompt) }
+                },
+            )
+            activeExecutionConsole?.cancel()
+            activeExecutionConsole = console
+            val result = codeExecutor.execute(
+                ExecutionRequest(
+                    code = activeFile.content,
+                    language = activeFile.language,
+                    fileName = activeFile.name,
+                    projectDirectory = repository.projectDirectory(s.projectName),
+                    console = console,
+                ),
+            )
             _state.update {
                 it.copy(
                     executionStatus = result.status,
@@ -885,10 +1264,15 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     errorColumn = result.errorColumn,
                     errorType = result.errorType,
                     executionDurationMs = result.durationMs,
+                    waitingForInput = false,
+                    inputPrompt = "",
                 )
             }
+            if (activeExecutionConsole === console) activeExecutionConsole = null
         }
     }
+
+    fun submitTerminalInput(value: String): Boolean = activeExecutionConsole?.submitInput(value) == true
 
     fun retryRepair() {
         val s = _state.value
@@ -912,78 +1296,44 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 }
 
-private const val CODE_MODE_PROMPT = """You are the coding assistant inside PocketIDE, an on-device Android IDE that runs code directly on the phone.
+private const val BENCHMARK_SYSTEM_PROMPT = """You are an on-device coding model benchmark. Follow the request directly, keep the answer deterministic and concise, and do not discuss the benchmark."""
 
-When the user asks you to write or modify code, respond in EXACTLY this format:
+private const val BENCHMARK_FIXED_PROMPT = "Write Python code that parses JSON Lines sensor readings and returns min, max, and average per sensor while safely skipping malformed records. Output code only."
 
-PLAN: <one-sentence description of what you will do>
-FILENAME: <filename with extension, e.g. main.py>
-```<language>
-<the full file content>
+private data class BenchmarkPlan(val profile: String, val threads: Int, val warmup: Boolean)
+
+private const val CODE_MODE_PROMPT_V2 = """You are PocketIDE's local coding agent. Build the requested program directly. Never refuse a normal coding request or say that an AI cannot build it. If one detail is unavailable on Android, implement the closest runnable local version and mention that limit only in PLAN.
+
+Return exactly:
+PLAN: one short sentence
+FILE: filename.ext
+```language
+complete runnable code
 ```
 
-Only include ONE code block. Keep the plan to a single line. Do not add commentary outside this format.
+For multiple files, repeat FILE plus its fenced code block. No commentary outside this format. Do not use placeholders or TODOs.
 
-SUPPORTED LANGUAGES (pick the best fit): python, javascript, typescript, lua, sql, java, shell.
+Runtime facts:
+- Python is genuine CPython 3.11. input(), functions, classes, exceptions, sibling-file imports, and most standard-library modules work. Use input() for interactive terminal programs.
+- JavaScript is Rhino ES5: use var and function, not let/const, arrows, classes, async, fetch, or template literals.
+- TypeScript uses compatibility type-stripping and the Rhino ES5 runtime; keep syntax simple.
+- Lua uses LuaJ; SQL uses SQLite; Shell uses Android POSIX sh; Java is BeanShell scripting, not javac.
+- HTML/CSS/JavaScript/simple TypeScript projects can use browser preview at a device-local 127.0.0.1 URL. Browser pages do not receive the native hardware object; run a Python, JavaScript, TypeScript, Lua, or Java script inside PocketIDE for hardware calls.
+- A global hardware object is available in Python, JavaScript, TypeScript, Lua, and Java. Useful methods include toast, vibrate, setFlashlight, batteryLevel, readSensor, speak, notify, getLocation, readFile, writeFile, startServer, and sandboxPath.
+- Camera support is capability discovery only through hardware.listCameras(); photo and video capture are not implemented.
 
-HARDWARE BRIDGE — available in javascript, lua, java via a global `hardware` object:
-  hardware.toast(msg)               show a short toast
-  hardware.toastLong(msg)           show a long toast
-  hardware.vibrate(ms)              vibrate for N milliseconds
-  hardware.vibratePattern(timings)  vibrate a waveform pattern [0,200,100,400]
-  hardware.setFlashlight(bool)      turn torch on/off, returns true on success
-  hardware.batteryLevel()           battery percent 0..100, or -1
-  hardware.batteryTemperature()     battery temp in Celsius (default 25)
-  hardware.isCharging()             true if charging
-  hardware.clipboardGet()           read clipboard text
-  hardware.clipboardSet(text)       write clipboard
-  hardware.screenInfo()             "WxH, density"
-  hardware.screenBrightness()       current brightness 0..255
-  hardware.setScreenBrightness(n)   set brightness 0..255 (needs WRITE_SETTINGS)
-  hardware.keepScreenOn(bool)       keep screen on or allow it to sleep
-  hardware.networkType()            "wifi"|"cellular"|"ethernet"|"none"
-  hardware.isOnline()               boolean
-  hardware.storageFree()            free bytes
-  hardware.storageTotal()           total bytes
-  hardware.readSensor(type, ms)     type: accelerometer|gyroscope|light|pressure|proximity|magnetic
-  hardware.listSensors()            list available sensor types
-  hardware.getDeviceInfo()          multi-line device summary
-  hardware.openUrl(url)             opens in the default browser
-  hardware.speak(text)              text-to-speech, returns true on success
-  hardware.stopSpeak()              stop ongoing TTS
-  hardware.playTone(freqHz, ms)     play a beep tone (e.g. 440Hz, 200ms)
-  hardware.notify(title, text)      show a system notification
-  hardware.getLocation(timeoutMs)   one-shot GPS: "lat,lng,accuracy=m" (default 5000ms)
-  hardware.listBluetooth()          list paired BT devices: "name|address" per line
-  hardware.listCameras()            list camera IDs with facing, flash, resolutions
-  hardware.readFile(path)           read file from app sandbox
-  hardware.writeFile(path, text)    write file to app sandbox
-  hardware.listFiles(path)          list files in sandbox directory
-  hardware.deleteFile(path)         delete file from sandbox
-  hardware.sandboxPath()            get sandbox root path
-  hardware.startServer(port)        start localhost HTTP server (default 8080)
-  hardware.stopServer()             stop the HTTP server
-  hardware.isServerRunning()        check if server is active
+Use the language the user requests. If none is requested, choose the runtime that best fits the task; use HTML/CSS/JavaScript for visual browser apps. Never substitute a calculator, Fibonacci example, or other canned demo for the requested program."""
 
-Use `hardware` freely when the user asks for anything device-related (flashlight, vibrate, battery,
-sensors, TTS, GPS, bluetooth, camera, file I/O, HTTP server, notifications, screen control, audio).
+private const val CODER_SYSTEM_PROMPT_V2 = """You are PocketIDE's implementation agent. Produce complete runnable files from the plan. Never refuse a normal coding request.
 
-JAVASCRIPT / TYPESCRIPT RULES — the runtime is Mozilla Rhino (ES5 only). ALWAYS:
-- Use var (never let/const)
-- Use function expressions (never arrow =>)
-- Use string concatenation with + (never backtick template literals)
-- Use index-based for loops (never for...of, for...in on arrays)
-- Avoid destructuring, spread, default parameters, classes, async/await, Promise, fetch
-- Output via console.log(...)
+Return exactly:
+PLAN: one short sentence
+FILE: filename.ext
+```language
+full file content
+```
 
-PYTHON RULES — transpiled to JS. Use simple Python 3:
-- print(x), for x in range(n), if/elif/else, while, def, return
-- Basic strings, lists, dicts, arithmetic. Avoid f-strings, comprehensions, decorators, imports.
-
-LUA — full Lua 5.2 standard library. Use print(...) for output.
-SQL — standard SQLite. Use CREATE TABLE, INSERT, SELECT.
-SHELL — POSIX sh, echo for output.
-JAVA — BeanShell scripting (no class boilerplate needed). Use System.out.println(...)."""
+Repeat FILE blocks when the plan needs multiple files. No TODOs and no text outside the format. Python is CPython 3.11 with input() and sibling imports. JavaScript/TypeScript must remain Rhino ES5-compatible. Lua, SQLite, Android sh, and BeanShell are available. A global hardware object exposes Android hardware when requested."""
 
 private const val ASK_MODE_PROMPT = """You are a knowledgeable assistant inside PocketIDE, an on-device Android IDE.
 The user is in ASK mode — they want explanations, not file modifications.
@@ -992,7 +1342,7 @@ Do NOT write code blocks or attempt to create files. Respond in plain text.
 If the user asks you to write code, suggest they switch to CODE mode.
 
 SUPPORTED LANGUAGES: python, javascript, typescript, lua, sql, java, shell.
-HARDWARE BRIDGE — available in javascript, lua, java via a global `hardware` object:
+HARDWARE BRIDGE — available in javascript, typescript, python, lua, and java via a global `hardware` object:
   toast/toastLong, vibrate/vibratePattern, setFlashlight, batteryLevel/batteryTemperature,
   isCharging, clipboardGet/Set, screenInfo/screenBrightness/setScreenBrightness/keepScreenOn,
   networkType/isOnline, storageFree/Total, readSensor/listSensors, getDeviceInfo, openUrl,
@@ -1000,7 +1350,9 @@ HARDWARE BRIDGE — available in javascript, lua, java via a global `hardware` o
   readFile/writeFile/listFiles/deleteFile/sandboxPath, startServer/stopServer/isServerRunning
 
 When explaining code, consider the ES5 JavaScript constraints (var, no arrow functions,
-no template literals) and Python transpilation limits described in CODE mode."""
+no template literals) and CPython-on-Android limitations described in CODE mode. Browser
+preview runs at 127.0.0.1 but does not expose the native hardware object. listCameras
+reports capabilities only; it does not capture photos or video."""
 
 private const val PLAN_MODE_PROMPT = """You are a planning assistant inside PocketIDE, an on-device Android IDE.
 The user is in PLAN mode — they want a detailed plan before any code is written.
@@ -1013,7 +1365,7 @@ Analyze the request and respond with a structured implementation plan:
 5. Consider which language is best for each file
 
 SUPPORTED LANGUAGES: python, javascript, typescript, lua, sql, java, shell.
-HARDWARE BRIDGE — available in javascript, lua, java via a global `hardware` object:
+HARDWARE BRIDGE — available in javascript, typescript, python, lua, and java via a global `hardware` object:
   toast/toastLong, vibrate/vibratePattern, setFlashlight, batteryLevel/batteryTemperature,
   isCharging, clipboardGet/Set, screenInfo/screenBrightness/setScreenBrightness/keepScreenOn,
   networkType/isOnline, storageFree/Total, readSensor/listSensors, getDeviceInfo, openUrl,
@@ -1021,7 +1373,9 @@ HARDWARE BRIDGE — available in javascript, lua, java via a global `hardware` o
   readFile/writeFile/listFiles/deleteFile/sandboxPath, startServer/stopServer/isServerRunning
 
 When planning, consider the ES5 JavaScript constraints (var, no arrow functions,
-no template literals) and Python transpilation limits. Plan code that will actually
+no template literals) and CPython-on-Android limits. Browser preview runs at
+127.0.0.1 but does not expose the native hardware object. listCameras reports
+capabilities only; it does not capture photos or video. Plan code that will actually
 run on-device in the PocketIDE sandbox.
 
 Do NOT write code blocks. The user will switch to CODE mode to implement the plan."""
@@ -1036,52 +1390,18 @@ Your role is to analyze the user's request and produce a concise implementation 
 5. Recommend the best language for each file
 
 SUPPORTED LANGUAGES: python, javascript, typescript, lua, sql, java, shell.
-HARDWARE BRIDGE — available in javascript, lua, java via a global `hardware` object:
+HARDWARE BRIDGE — available in javascript, typescript, python, lua, and java via a global `hardware` object:
   toast/toastLong, vibrate/vibratePattern, setFlashlight, batteryLevel/batteryTemperature,
   isCharging, clipboardGet/Set, screenInfo/screenBrightness/setScreenBrightness/keepScreenOn,
   networkType/isOnline, storageFree/Total, readSensor/listSensors, getDeviceInfo, openUrl,
   speak/stopSpeak, playTone, notify, getLocation, listBluetooth, listCameras,
   readFile/writeFile/listFiles/deleteFile/sandboxPath, startServer/stopServer/isServerRunning
 
+Browser preview runs at 127.0.0.1 but does not expose the native hardware object.
+hardware.listCameras reports capabilities only; it does not capture photos or video.
+
 Output ONLY the plan in plain text. Do NOT write code blocks.
 The Coder agent will implement based on your plan."""
-
-private const val CODER_SYSTEM_PROMPT = """You are the Coder agent in PocketIDE's SWARM pipeline.
-Your role is to write production-quality code based on the Architect's plan.
-
-Respond in EXACTLY this format:
-
-PLAN:
-<brief restatement of what you're implementing>
-
-FILENAME:
-<filename with extension>
-
-CODE:
-```<language>
-<code here>
-```
-
-RULES:
-- Write complete, runnable code — no placeholders, no TODOs
-- Use the PLAN/FILENAME/CODE format exactly
-- One file per response
-- Keep code minimal and focused
-
-SUPPORTED LANGUAGES: python, javascript, typescript, lua, sql, java, shell.
-JAVASCRIPT runs as ES5 (var, no arrow functions, no template literals).
-PYTHON is transpiled to ES5 JavaScript — use print(), input(), and standard types.
-TYPESCRIPT is transpiled to ES5 JavaScript — use typed syntax, it will be stripped.
-LUA runs via luaj. SQL uses an in-memory SQLite database.
-JAVA uses BeanShell (no class boilerplate, use System.out.println).
-SHELL uses POSIX sh.
-
-HARDWARE BRIDGE — available in javascript, lua, java via a global `hardware` object:
-  toast/toastLong, vibrate/vibratePattern, setFlashlight, batteryLevel/batteryTemperature,
-  isCharging, clipboardGet/Set, screenInfo/screenBrightness/setScreenBrightness/keepScreenOn,
-  networkType/isOnline, storageFree/Total, readSensor/listSensors, getDeviceInfo, openUrl,
-  speak/stopSpeak, playTone, notify, getLocation, listBluetooth, listCameras,
-  readFile/writeFile/listFiles/deleteFile/sandboxPath, startServer/stopServer/isServerRunning"""
 
 private const val VALIDATOR_SYSTEM_PROMPT = """You are the Validator agent in PocketIDE's SWARM pipeline.
 Your role is to fix code that failed execution. You receive the error output and the failing code.

@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.chaquopy)
 }
 
 android {
@@ -46,6 +47,12 @@ android {
         unitTests {
             isIncludeAndroidResources = true
         }
+    }
+}
+
+chaquopy {
+    defaultConfig {
+        version = "3.11"
     }
 }
 

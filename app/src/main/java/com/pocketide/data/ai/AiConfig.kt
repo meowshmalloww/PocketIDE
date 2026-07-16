@@ -4,7 +4,7 @@ data class ModelEntry(
     val name: String,
     val modelPath: String,
     val tokenizerPath: String = "",
-    val promptTemplate: PromptTemplate = PromptTemplate.LLAMA3,
+    val promptTemplate: PromptTemplate = PromptTemplate.AUTO,
 ) {
     val format: ModelFormat get() = when {
         modelPath.endsWith(".gguf", ignoreCase = true) -> ModelFormat.GGUF
@@ -64,6 +64,7 @@ enum class Quantization(val displayName: String, val suffix: String) {
 }
 
 enum class PromptTemplate(val displayName: String) {
+    AUTO("Auto detect (recommended)"),
     LLAMA3("Llama 3 / 3.2 Instruct"),
     QWEN("Qwen 2.5 / Qwen 3 ChatML"),
     PLAIN("Plain (system + user concatenated)"),

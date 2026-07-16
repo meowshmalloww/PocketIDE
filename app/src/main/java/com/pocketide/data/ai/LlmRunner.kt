@@ -7,7 +7,7 @@ import kotlinx.coroutines.Dispatchers
  * Unified interface for on-device LLM inference.
  *
  * Implementations:
- * - [ExecutorchLlmRunner] — runs .pte models via ExecuTorch (NPU acceleration on Snapdragon)
+ * - [ExecutorchLlmRunner] — runs .pte models through the delegates included in the ExecuTorch export
  * - [LlamaCppRunner] — runs .gguf models via llama.cpp (broad model ecosystem)
  *
  * The caller (typically [AiService]) selects the appropriate runner based on the
@@ -15,9 +15,20 @@ import kotlinx.coroutines.Dispatchers
  */
 interface LlmRunner {
 
+    data class LoadOptions(
+        val contextLength: Int = 4096,
+        val threadCount: Int = 0,
+    )
+
     fun interface TokenSink {
         fun onToken(token: String)
     }
+
+    data class GenerationOptions(
+        val deterministic: Boolean = false,
+        val ignoreEos: Boolean = false,
+        val seed: Int = -1,
+    )
 
     sealed class LoadResult {
         data object Success : LoadResult()
@@ -25,7 +36,13 @@ interface LlmRunner {
     }
 
     sealed class GenerateResult {
-        data class Success(val text: String, val statsJson: String?) : GenerateResult()
+        data class Success(
+            val text: String,
+            val statsJson: String?,
+            val generatedTokenCount: Int? = null,
+            val promptTokenCount: Int? = null,
+            val actualThreadCount: Int? = null,
+        ) : GenerateResult()
         data class Error(val message: String) : GenerateResult()
     }
 
@@ -33,12 +50,14 @@ interface LlmRunner {
         modelPath: String,
         tokenizerPath: String,
         temperature: Float,
+        options: LoadOptions = LoadOptions(),
     ): LoadResult
 
     suspend fun generate(
         prompt: String,
         seqLen: Int,
         sink: TokenSink,
+        options: GenerationOptions = GenerationOptions(),
     ): GenerateResult
 
     fun stop()

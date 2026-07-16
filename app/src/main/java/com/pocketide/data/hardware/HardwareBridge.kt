@@ -467,8 +467,12 @@ class HardwareBridge(private val context: Context) {
     } catch (_: Exception) { false }
 
     private fun resolveSandboxFile(path: String): File {
-        val sanitized = path.replace("..", "").trimStart('/')
-        return File(context.filesDir, sanitized)
+        val root = context.filesDir.canonicalFile
+        val candidate = File(root, path.trimStart('/', '\\')).canonicalFile
+        require(candidate.path == root.path || candidate.path.startsWith(root.path + File.separator)) {
+            "Path escapes the app sandbox"
+        }
+        return candidate
     }
 
     /** Get the absolute path of the app sandbox root. */
@@ -481,24 +485,28 @@ class HardwareBridge(private val context: Context) {
      * Returns the URL (e.g. "http://localhost:8080") or error message.
      */
     fun startServer(port: Int = 8080): String = try {
+        require(port in 1024..65535) { "Port must be between 1024 and 65535" }
         stopServer()
-        val rootDir = File(context.filesDir, "www")
+        val rootDir = File(context.filesDir, "www").canonicalFile
         if (!rootDir.exists()) rootDir.mkdirs()
 
-        httpServer = object : NanoHTTPD(port) {
+        httpServer = object : NanoHTTPD("127.0.0.1", port) {
             override fun serve(session: IHTTPSession): Response {
                 val uri = session.uri.trimStart('/')
-                val file = if (uri.isEmpty()) File(rootDir, "index.html") else File(rootDir, uri)
-                return if (file.exists() && file.isFile) {
+                val file = File(rootDir, if (uri.isEmpty()) "index.html" else uri).canonicalFile
+                val insideRoot = file.path == rootDir.path || file.path.startsWith(rootDir.path + File.separator)
+                return if (!insideRoot) {
+                    newFixedLengthResponse(Response.Status.FORBIDDEN, "text/plain", "403 Forbidden")
+                } else if (file.exists() && file.isFile) {
                     val mimeType = guessMimeType(file.name)
-                    newFixedLengthResponse(Response.Status.OK, mimeType, file.readText())
+                    newFixedLengthResponse(Response.Status.OK, mimeType, file.inputStream(), file.length())
                 } else {
                     newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "404 Not Found: $uri")
                 }
             }
         }.also { it.start() }
 
-        "http://localhost:$port"
+        "http://127.0.0.1:$port"
     } catch (e: Exception) {
         Log.w("HardwareBridge", "startServer failed", e)
         "[server error: ${e.message}]"

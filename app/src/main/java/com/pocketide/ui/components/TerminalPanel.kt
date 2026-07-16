@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -22,17 +23,33 @@ import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -50,6 +67,15 @@ fun TerminalPanel(
     onRun: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
+    warnings: String = "",
+    errorLine: Int? = null,
+    errorColumn: Int? = null,
+    errorType: String? = null,
+    durationMs: Long = 0,
+    onPreview: (() -> Unit)? = null,
+    waitingForInput: Boolean = false,
+    inputPrompt: String = "",
+    onSubmitInput: (String) -> Boolean = { false },
 ) {
     val isDark = LocalIsDarkTheme.current
 
@@ -131,6 +157,16 @@ fun TerminalPanel(
             Spacer(modifier = Modifier.weight(1f))
 
             // Action buttons
+            if (onPreview != null) {
+                IconButton(onClick = onPreview, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        imageVector = Icons.Filled.OpenInBrowser,
+                        contentDescription = "Preview web project",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
             IconButton(onClick = onRun, modifier = Modifier.size(36.dp)) {
                 Icon(
                     imageVector = Icons.Filled.PlayArrow,
@@ -164,12 +200,30 @@ fun TerminalPanel(
             visible = isExpanded,
             enter = expandVertically(),
             exit = shrinkVertically(),
+            modifier = if (isExpanded) Modifier.weight(1f) else Modifier,
         ) {
             val output = buildString {
-                if (stdout.isNotBlank()) append(stdout)
+                if (stdout.isNotBlank()) {
+                    appendLine("OUTPUT")
+                    append(stdout.trimEnd())
+                }
+                if (warnings.isNotBlank()) {
+                    if (isNotEmpty()) appendLine()
+                    appendLine("WARNINGS")
+                    append(warnings.trimEnd())
+                }
                 if (stderr.isNotBlank()) {
-                    if (stdout.isNotBlank()) append("\n")
-                    append(stderr)
+                    if (isNotEmpty()) appendLine()
+                    appendLine("ERROR${errorType?.let { " · $it" } ?: ""}")
+                    append(stderr.trimEnd())
+                    if (errorLine != null) {
+                        append("\nLocation: line $errorLine")
+                        if (errorColumn != null) append(", column $errorColumn")
+                    }
+                }
+                if (status != ExecutionStatus.IDLE && status != ExecutionStatus.RUNNING) {
+                    if (isNotEmpty()) appendLine()
+                    append("Completed in ${durationMs}ms")
                 }
             }
 
@@ -178,29 +232,67 @@ fun TerminalPanel(
                 scrollState.animateScrollTo(scrollState.maxValue)
             }
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(120.dp)
-                    .verticalScroll(scrollState)
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-            ) {
-                if (output.isBlank()) {
-                    Text(
-                        text = "$ ",
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                        color = ThemeColors.consoleStdout(isDark),
-                    )
-                } else {
-                    Text(
-                        text = output,
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                        color = if (status == ExecutionStatus.FAILED && stderr.isNotBlank()) {
-                            ThemeColors.consoleStderr(isDark)
-                        } else {
-                            ThemeColors.consoleStdout(isDark)
-                        },
-                    )
+            Column(modifier = Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .verticalScroll(scrollState)
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                ) {
+                    if (output.isBlank() && !waitingForInput) {
+                        Text(
+                            text = "$ ",
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = ThemeColors.consoleStdout(isDark),
+                        )
+                    } else {
+                        Text(
+                            text = output,
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = if (status == ExecutionStatus.FAILED && stderr.isNotBlank()) {
+                                ThemeColors.consoleStderr(isDark)
+                            } else {
+                                ThemeColors.consoleStdout(isDark)
+                            },
+                        )
+                    }
+                }
+
+                if (waitingForInput) {
+                    var terminalInput by rememberSaveable { mutableStateOf("") }
+                    val focusRequester = remember { FocusRequester() }
+                    val keyboardController = LocalSoftwareKeyboardController.current
+                    fun submit() {
+                        if (onSubmitInput(terminalInput)) terminalInput = ""
+                    }
+                    LaunchedEffect(inputPrompt) {
+                        focusRequester.requestFocus()
+                        keyboardController?.show()
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = terminalInput,
+                            onValueChange = { terminalInput = it },
+                            label = { Text(inputPrompt.ifBlank { "Program input" }) },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = { submit() }),
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusRequester(focusRequester)
+                                .semantics { contentDescription = "Program input" },
+                        )
+                        IconButton(onClick = { submit() }) {
+                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Submit program input")
+                        }
+                    }
                 }
             }
         }

@@ -35,8 +35,12 @@ object BackendInfo {
         val hasI8mm: Boolean,
         val hasSve: Boolean,
         val hasSve2: Boolean,
+        val hasSme2: Boolean,
         val hasDotprod: Boolean,
         val hasFp16: Boolean,
+        val hasAsimd: Boolean,
+        val hasAes: Boolean,
+        val hasCrc32: Boolean,
         val coreCount: Int,
     ) {
         /** KleidiAI INT4 kernels require at minimum NEON + i8mm support. */
@@ -49,7 +53,7 @@ object BackendInfo {
 
         /** SME2 enables advanced matrix multiplication for newer Arm cores. */
         val sme2Capable: Boolean
-            get() = isArm64 && hasSve2
+            get() = isArm64 && hasSme2
     }
 
     /** Cached CPU features — read once, reused. */
@@ -60,7 +64,8 @@ object BackendInfo {
      *
      * On Arm big.LITTLE SoCs, using all cores can cause thermal throttling
      * and actually reduce throughput. We use a heuristic:
-     * - 8+ cores: use 6 threads (reserve 2 for UI/system)
+     * - 8+ newer SIMD-capable cores: start at 6 threads
+     * - 8+ legacy big.LITTLE cores: start at 4 threads to avoid loading every efficiency core
      * - 6 cores: use 4 threads
      * - 4 cores: use 3 threads
      * - fewer: use all available
@@ -68,23 +73,51 @@ object BackendInfo {
     val optimalThreadCount: Int by lazy {
         val cores = features.coreCount
         when {
-            cores >= 8 -> 6
+            cores >= 8 && features.hasI8mm -> 6
+            cores >= 8 -> 4
             cores >= 6 -> 4
             cores >= 4 -> 3
             else -> cores.coerceAtLeast(1)
         }
     }
 
+    /**
+     * Native llama.cpp library selected by KotlinLlamaCpp's Android loader.
+     * Keep this logic aligned with LlamaContext's runtime dispatch so reports
+     * identify the Arm ISA path that actually backs GGUF inference.
+     */
+    val llamaCppNativeLibrary: String by lazy {
+        val f = features
+        if (!f.isArm64) {
+            if (Build.SUPPORTED_ABIS.firstOrNull() == "x86_64") {
+                "librnllama_x86_64.so"
+            } else {
+                "librnllama.so"
+            }
+        } else {
+            val armV82Dispatch = f.hasAsimd && f.hasCrc32 && f.hasAes
+            when {
+                armV82Dispatch && f.hasDotprod && f.hasI8mm -> "librnllama_v8_2_dotprod_i8mm.so"
+                armV82Dispatch && f.hasDotprod -> "librnllama_v8_2_dotprod.so"
+                armV82Dispatch && f.hasI8mm -> "librnllama_v8_2_i8mm.so"
+                armV82Dispatch -> "librnllama_v8_2.so"
+                else -> "librnllama_v8.so"
+            }
+        }
+    }
+
     /** Human-readable backend summary for logging and UI display. */
     val backendSummary: String by lazy {
         buildString {
-            appendLine("Backend: ExecuTorch 1.0.0 + XNNPACK")
+            appendLine("Backends: llama.cpp (GGUF) or ExecuTorch + XNNPACK (PTE)")
             appendLine("Architecture: ${if (features.isArm64) "arm64-v8a" else Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"}")
-            appendLine("Cores: ${features.coreCount} (using $optimalThreadCount threads)")
+            appendLine("Cores: ${features.coreCount} (suggested starting point: $optimalThreadCount threads)")
             appendLine("NEON: ${features.hasNeon}")
             appendLine("i8mm: ${features.hasI8mm}")
             appendLine("Dotprod: ${features.hasDotprod}")
             appendLine("SVE2: ${features.hasSve2}")
+            appendLine("SME2: ${features.hasSme2}")
+            appendLine("llama.cpp native library: $llamaCppNativeLibrary")
             appendLine("KleidiAI INT4: ${if (features.kleidiAiInt4Capable) "capable" else "not supported"}")
             appendLine("KleidiAI INT8: ${if (features.kleidiAiInt8Capable) "capable" else "not supported"}")
             appendLine("SME2: ${if (features.sme2Capable) "capable" else "not supported"}")
@@ -122,8 +155,12 @@ object BackendInfo {
             hasI8mm = featuresLine.contains("i8mm"),
             hasSve = featuresLine.contains("sve"),
             hasSve2 = featuresLine.contains("sve2"),
-            hasDotprod = featuresLine.contains("dotprod"),
+            hasSme2 = featuresLine.contains("sme2"),
+            hasDotprod = featuresLine.contains("dotprod") || featuresLine.contains("asimddp"),
             hasFp16 = featuresLine.contains("fphp") || featuresLine.contains("asimdhp"),
+            hasAsimd = featuresLine.contains("asimd") || featuresLine.contains("neon"),
+            hasAes = featuresLine.contains("aes"),
+            hasCrc32 = featuresLine.contains("crc32"),
             coreCount = coreCount,
         )
     }

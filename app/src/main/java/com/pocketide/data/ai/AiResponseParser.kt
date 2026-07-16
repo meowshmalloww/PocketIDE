@@ -7,10 +7,17 @@ data class ParsedAiResponse(
     val code: String?,
     val language: Language?,
     val filename: String?,
+    val files: List<ParsedAiFile> = emptyList(),
+)
+
+data class ParsedAiFile(
+    val filename: String,
+    val code: String,
+    val language: Language,
 )
 
 private val PLAN_REGEX = Regex("""(?im)^\s*PLAN\s*[:\-]\s*(.+)$""")
-private val FILENAME_REGEX = Regex("""(?im)^\s*FILENAME\s*[:\-]\s*[`"']?([^`"'\s]+)[`"']?\s*$""")
+private val FILENAME_REGEX = Regex("""(?im)^\s*(?:FILE|FILENAME)\s*[:\-]\s*[`"']?([^`"'\s]+)[`"']?\s*$""")
 private val CODE_BLOCK_REGEX = Regex("""```([A-Za-z0-9+#]*)\s*\n([\s\S]*?)```""")
 // Fallback: matches an unterminated code fence (AI stopped mid-generation).
 private val UNCLOSED_CODE_BLOCK_REGEX = Regex("""```([A-Za-z0-9+#]*)\s*\n([\s\S]*)$""")
@@ -26,7 +33,9 @@ private val UNCLOSED_CODE_BLOCK_REGEX = Regex("""```([A-Za-z0-9+#]*)\s*\n([\s\S]
  */
 fun parseAiResponse(rawContent: String): ParsedAiResponse {
     val plan = PLAN_REGEX.find(rawContent)?.groupValues?.get(1)?.trim()?.trim('`', '"', '\'')
-    val filename = FILENAME_REGEX.find(rawContent)?.groupValues?.get(1)?.trim()
+    val parsedFiles = parseFiles(rawContent)
+    val firstParsedFile = parsedFiles.firstOrNull()
+    val filename = firstParsedFile?.filename ?: FILENAME_REGEX.find(rawContent)?.groupValues?.get(1)?.trim()
 
     // Try closed fence first, then unclosed fallback.
     val closedMatch = CODE_BLOCK_REGEX.find(rawContent)
@@ -47,7 +56,29 @@ fun parseAiResponse(rawContent: String): ParsedAiResponse {
     val language = languageFromTag(codeLangTag)
         ?: filename?.substringAfterLast('.', "")?.let { Language.fromExtension(it) }
 
-    return ParsedAiResponse(plan = plan, code = code, language = language, filename = filename)
+    return ParsedAiResponse(
+        plan = plan,
+        code = firstParsedFile?.code ?: code,
+        language = firstParsedFile?.language ?: language,
+        filename = filename,
+        files = parsedFiles,
+    )
+}
+
+private fun parseFiles(rawContent: String): List<ParsedAiFile> {
+    val headers = FILENAME_REGEX.findAll(rawContent).toList()
+    return headers.mapIndexedNotNull { index, header ->
+        val filename = header.groupValues[1].trim()
+        val segmentEnd = headers.getOrNull(index + 1)?.range?.first ?: rawContent.length
+        val segment = rawContent.substring(header.range.last + 1, segmentEnd)
+        val fence = CODE_BLOCK_REGEX.find(segment) ?: UNCLOSED_CODE_BLOCK_REGEX.find(segment)
+        val code = fence?.groupValues?.get(2)?.trimEnd() ?: return@mapIndexedNotNull null
+        val tag = fence.groupValues[1].trim().lowercase()
+        val language = languageFromTag(tag)
+            ?: Language.fromExtension(filename.substringAfterLast('.', ""))
+            ?: return@mapIndexedNotNull null
+        ParsedAiFile(filename = filename, code = code, language = language)
+    }
 }
 
 private fun languageFromTag(tag: String): Language? = when (tag) {

@@ -2,6 +2,7 @@ package com.pocketide.data.execution
 
 import android.content.Context as AndroidContext
 import android.util.Log
+import android.os.SystemClock
 import android.database.sqlite.SQLiteDatabase
 import com.pocketide.data.hardware.HardwareBridge
 import com.pocketide.data.model.ExecutionResult
@@ -28,13 +29,15 @@ private const val SHELL_TIMEOUT_MS = 10_000L
 
 /**
  * Executes code on-device where a real, safe interpreter is available.
- * Supported: Python (transpiled to JS), JavaScript (Rhino), TypeScript (stripped to JS),
+ * Supported: Python (CPython), JavaScript (Rhino), TypeScript (stripped to JS),
  * Lua (LuaJ), Shell (ProcessBuilder), SQL (SQLite), Java (BeanShell).
  * Languages without an integrated runtime return a clear "not supported" result.
  */
 class CodeExecutor(
     private val context: AndroidContext? = null,
 ) {
+
+    private val pythonExecutor = PythonExecutor(context)
 
     private val jsContextFactory = object : ContextFactory() {
         override fun observeInstructionCount(cx: Context, instructionCount: Int) {
@@ -48,28 +51,40 @@ class CodeExecutor(
         }
     }
 
-    suspend fun execute(code: String, language: Language): ExecutionResult = withContext(Dispatchers.Default) {
-        val startTime = System.currentTimeMillis()
-        when (language) {
-            Language.JAVASCRIPT -> executeJavaScript(code, startTime)
-            Language.TYPESCRIPT -> executeTypeScript(code, startTime)
-            Language.LUA -> executeLua(code, startTime)
-            Language.SHELL -> executeShell(code, startTime)
-            Language.SQL -> executeSql(code, startTime)
-            Language.JAVA -> executeJava(code, startTime)
-            Language.PYTHON -> executePython(code, startTime)
+    suspend fun execute(code: String, language: Language): ExecutionResult =
+        execute(ExecutionRequest(code = code, language = language))
+
+    suspend fun execute(request: ExecutionRequest): ExecutionResult = withContext(Dispatchers.Default) {
+        val startTime = SystemClock.elapsedRealtime()
+        when (request.language) {
+            Language.JAVASCRIPT -> executeJavaScript(request.code, startTime, request.console)
+            Language.TYPESCRIPT -> executeTypeScript(request.code, startTime, request.console)
+            Language.LUA -> executeLua(request.code, startTime, request.console)
+            Language.SHELL -> executeShell(request.code, startTime, request.projectDirectory)
+            Language.SQL -> executeSql(request.code, startTime)
+            Language.JAVA -> executeJava(request.code, startTime, request.console)
+            Language.PYTHON -> pythonExecutor.execute(request, startTime)
             else -> ExecutionResult(
                 status = ExecutionStatus.FAILED,
                 stdout = "",
-                stderr = "Execution for ${language.displayName} is not yet supported on-device.\n" +
-                    "Currently supported: Python, JavaScript, TypeScript, Lua, Shell, SQL, Java.",
+                stderr = when (request.language.executionSupport) {
+                    com.pocketide.data.model.ExecutionSupport.PREVIEW ->
+                        "${request.language.displayName} uses browser preview. Tap the browser button in Terminal."
+                    com.pocketide.data.model.ExecutionSupport.EDITOR_ONLY ->
+                        "${request.language.displayName} is editor-only in this build; no on-device compiler/runtime is bundled."
+                    else -> "${request.language.displayName} could not be executed by its on-device runtime."
+                },
                 exitCode = -1,
-                durationMs = System.currentTimeMillis() - startTime,
+                durationMs = SystemClock.elapsedRealtime() - startTime,
             )
         }
     }
 
-    private fun executeJavaScript(code: String, startTime: Long): ExecutionResult {
+    private fun executeJavaScript(
+        code: String,
+        startTime: Long,
+        console: ExecutionConsole = ExecutionConsole(),
+    ): ExecutionResult {
         val stdout = StringBuilder()
 
         val rhinoContext = jsContextFactory.enterContext()
@@ -84,6 +99,9 @@ class CodeExecutor(
             if (consoleObj is ScriptableObject) {
                 consoleObj.put("log", consoleObj, logger)
             }
+            val input = TerminalInputFunction(console)
+            ScriptableObject.putProperty(scope, "input", input)
+            ScriptableObject.putProperty(scope, "prompt", input)
 
             // Inject hardware bridge if Android context is available.
             // Expose the whole HardwareBridge object so all its methods
@@ -103,18 +121,18 @@ class CodeExecutor(
 
             ExecutionResult(
                 status = ExecutionStatus.PASSED,
-                stdout = stdout.toString(),
+                stdout = console.stdoutText() + stdout,
                 stderr = "",
                 exitCode = 0,
-                durationMs = System.currentTimeMillis() - startTime,
+                durationMs = SystemClock.elapsedRealtime() - startTime,
             )
         } catch (e: EvaluatorException) {
             ExecutionResult(
                 status = ExecutionStatus.FAILED,
-                stdout = stdout.toString(),
+                stdout = console.stdoutText() + stdout,
                 stderr = "${e.message}",
                 exitCode = 1,
-                durationMs = System.currentTimeMillis() - startTime,
+                durationMs = SystemClock.elapsedRealtime() - startTime,
                 errorLine = e.lineNumber().takeIf { it > 0 },
                 errorColumn = e.columnNumber().takeIf { it > 0 },
                 errorType = e.javaClass.simpleName,
@@ -122,10 +140,10 @@ class CodeExecutor(
         } catch (e: Exception) {
             ExecutionResult(
                 status = ExecutionStatus.FAILED,
-                stdout = stdout.toString(),
+                stdout = console.stdoutText() + stdout,
                 stderr = e.message ?: e.javaClass.simpleName,
                 exitCode = 1,
-                durationMs = System.currentTimeMillis() - startTime,
+                durationMs = SystemClock.elapsedRealtime() - startTime,
                 errorType = e.javaClass.simpleName,
             )
         } finally {
@@ -133,7 +151,11 @@ class CodeExecutor(
         }
     }
 
-    private fun executeLua(code: String, startTime: Long): ExecutionResult {
+    private fun executeLua(
+        code: String,
+        startTime: Long,
+        console: ExecutionConsole = ExecutionConsole(),
+    ): ExecutionResult {
         val stdout = StringBuilder()
         return try {
             val globals: Globals = JsePlatform.standardGlobals()
@@ -171,6 +193,10 @@ class CodeExecutor(
                     }
                     return LuaValue.NIL
                 }
+            })
+            ioTable.set("read", object : org.luaj.vm2.lib.VarArgFunction() {
+                override fun invoke(args: org.luaj.vm2.Varargs): LuaValue =
+                    LuaValue.valueOf(console.readLine("Program input"))
             })
             globals.set("io", ioTable)
 
@@ -359,6 +385,10 @@ class CodeExecutor(
                 hw.set("listCameras", object : org.luaj.vm2.lib.ZeroArgFunction() {
                     override fun call(): LuaValue = LuaValue.valueOf(bridge.listCameras())
                 })
+                // Match the method names exposed by the Java object bridge in
+                // Python, JavaScript, TypeScript, and BeanShell.
+                hw.set("setFlashlight", hw.get("flashlight"))
+                hw.set("getDeviceInfo", hw.get("deviceInfo"))
                 globals.set("hardware", hw)
             }
 
@@ -366,33 +396,33 @@ class CodeExecutor(
 
             ExecutionResult(
                 status = ExecutionStatus.PASSED,
-                stdout = stdout.toString(),
+                stdout = console.stdoutText() + stdout,
                 stderr = "",
                 exitCode = 0,
-                durationMs = System.currentTimeMillis() - startTime,
+                durationMs = SystemClock.elapsedRealtime() - startTime,
             )
         } catch (e: LuaError) {
             ExecutionResult(
                 status = ExecutionStatus.FAILED,
-                stdout = stdout.toString(),
+                stdout = console.stdoutText() + stdout,
                 stderr = e.message ?: "Lua error",
                 exitCode = 1,
-                durationMs = System.currentTimeMillis() - startTime,
+                durationMs = SystemClock.elapsedRealtime() - startTime,
                 errorType = e.javaClass.simpleName,
             )
         } catch (e: Exception) {
             ExecutionResult(
                 status = ExecutionStatus.FAILED,
-                stdout = stdout.toString(),
+                stdout = console.stdoutText() + stdout,
                 stderr = e.message ?: e.javaClass.simpleName,
                 exitCode = 1,
-                durationMs = System.currentTimeMillis() - startTime,
+                durationMs = SystemClock.elapsedRealtime() - startTime,
                 errorType = e.javaClass.simpleName,
             )
         }
     }
 
-    private fun executeShell(code: String, startTime: Long): ExecutionResult {
+    private fun executeShell(code: String, startTime: Long, projectDirectory: File? = null): ExecutionResult {
         val stdout = StringBuilder()
         val stderr = StringBuilder()
         val scriptFile = File.createTempFile("pocketide_script", ".sh")
@@ -401,6 +431,7 @@ class CodeExecutor(
             scriptFile.setExecutable(true)
 
             val process = ProcessBuilder("sh", scriptFile.absolutePath)
+                .directory(projectDirectory)
                 .redirectErrorStream(false)
                 .start()
 
@@ -424,7 +455,7 @@ class CodeExecutor(
                     stdout = stdout.toString(),
                     stderr = "Shell execution timed out (${SHELL_TIMEOUT_MS}ms)",
                     exitCode = -1,
-                    durationMs = System.currentTimeMillis() - startTime,
+                durationMs = SystemClock.elapsedRealtime() - startTime,
                 )
             }
 
@@ -437,7 +468,7 @@ class CodeExecutor(
                 stdout = stdout.toString(),
                 stderr = stderr.toString(),
                 exitCode = exitCode,
-                durationMs = System.currentTimeMillis() - startTime,
+                durationMs = SystemClock.elapsedRealtime() - startTime,
             )
         } catch (e: Exception) {
             ExecutionResult(
@@ -445,7 +476,7 @@ class CodeExecutor(
                 stdout = stdout.toString(),
                 stderr = e.message ?: e.javaClass.simpleName,
                 exitCode = 1,
-                durationMs = System.currentTimeMillis() - startTime,
+                durationMs = SystemClock.elapsedRealtime() - startTime,
                 errorType = e.javaClass.simpleName,
             )
         } finally {
@@ -453,13 +484,19 @@ class CodeExecutor(
         }
     }
 
-    private fun executeJava(code: String, startTime: Long): ExecutionResult {
+    private fun executeJava(
+        code: String,
+        startTime: Long,
+        console: ExecutionConsole = ExecutionConsole(),
+    ): ExecutionResult {
         val stdout = StringBuilder()
         val originalOut = System.out
         val baos = ByteArrayOutputStream()
         System.setOut(PrintStream(baos))
         return try {
             val interpreter = Interpreter()
+            interpreter.set("terminal", console)
+            interpreter.eval("String input(String prompt) { return terminal.readLine(prompt); }")
 
             // Inject hardware bridge if Android context is available
             context?.let { ctx ->
@@ -472,27 +509,27 @@ class CodeExecutor(
 
             ExecutionResult(
                 status = ExecutionStatus.PASSED,
-                stdout = stdout.toString(),
+                stdout = console.stdoutText() + stdout,
                 exitCode = 0,
-                durationMs = System.currentTimeMillis() - startTime,
+                durationMs = SystemClock.elapsedRealtime() - startTime,
             )
         } catch (e: bsh.EvalError) {
             ExecutionResult(
                 status = ExecutionStatus.FAILED,
-                stdout = stdout.toString(),
+                stdout = console.stdoutText() + stdout,
                 stderr = e.message ?: "BeanShell evaluation error",
                 exitCode = 1,
-                durationMs = System.currentTimeMillis() - startTime,
+                durationMs = SystemClock.elapsedRealtime() - startTime,
                 errorLine = e.errorLineNumber.takeIf { it > 0 },
                 errorType = e.javaClass.simpleName,
             )
         } catch (e: Exception) {
             ExecutionResult(
                 status = ExecutionStatus.FAILED,
-                stdout = stdout.toString(),
+                stdout = console.stdoutText() + stdout,
                 stderr = e.message ?: e.javaClass.simpleName,
                 exitCode = 1,
-                durationMs = System.currentTimeMillis() - startTime,
+                durationMs = SystemClock.elapsedRealtime() - startTime,
                 errorType = e.javaClass.simpleName,
             )
         } finally {
@@ -500,11 +537,7 @@ class CodeExecutor(
         }
     }
 
-    private fun executePython(code: String, startTime: Long): ExecutionResult {
-        val jsCode = transpilePythonToJs(code)
-        return executeJavaScript(jsCode, startTime)
-    }
-
+    @Deprecated("CPython execution is provided by PythonExecutor")
     private fun transpilePythonToJs(pyCode: String): String {
         val lines = pyCode.split("\n")
         val output = StringBuilder()
@@ -641,13 +674,20 @@ class CodeExecutor(
         return l
     }
 
-    private fun executeTypeScript(code: String, startTime: Long): ExecutionResult {
+    private fun executeTypeScript(
+        code: String,
+        startTime: Long,
+        console: ExecutionConsole = ExecutionConsole(),
+    ): ExecutionResult {
         // TypeScript is transpiled to JavaScript by stripping type annotations.
         // This handles simple cases: type annotations, interfaces, generics.
         // executeJavaScript will further preprocess ES6 features for Rhino.
         val jsCode = stripTypeScriptTypes(code)
-        return executeJavaScript(jsCode, startTime)
+        return executeJavaScript(jsCode, startTime, console)
     }
+
+    /** Compatibility transpilation used by the local browser preview for simple .ts files. */
+    fun transpileTypeScriptForBrowser(code: String): String = stripTypeScriptTypes(code)
 
     private fun preprocessJavaScript(code: String): String {
         // Protect strings (single/double quoted) and comments from regex corruption.
@@ -865,7 +905,7 @@ class CodeExecutor(
                 status = ExecutionStatus.PASSED,
                 stdout = stdout.toString(),
                 exitCode = 0,
-                durationMs = System.currentTimeMillis() - startTime,
+                durationMs = SystemClock.elapsedRealtime() - startTime,
             )
         } catch (e: Exception) {
             ExecutionResult(
@@ -873,7 +913,7 @@ class CodeExecutor(
                 stdout = stdout.toString(),
                 stderr = e.message ?: e.javaClass.simpleName,
                 exitCode = 1,
-                durationMs = System.currentTimeMillis() - startTime,
+                durationMs = SystemClock.elapsedRealtime() - startTime,
                 errorType = e.javaClass.simpleName,
             )
         } finally {
@@ -881,6 +921,17 @@ class CodeExecutor(
             dbFile.delete()
         }
     }
+}
+
+private class TerminalInputFunction(
+    private val console: ExecutionConsole,
+) : org.mozilla.javascript.BaseFunction() {
+    override fun call(
+        cx: Context,
+        scope: org.mozilla.javascript.Scriptable,
+        thisObj: org.mozilla.javascript.Scriptable,
+        args: Array<out Any>,
+    ): Any = console.readLine(args.firstOrNull()?.toString().orEmpty())
 }
 
 private class HardwareToastFunction(

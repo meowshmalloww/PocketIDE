@@ -32,15 +32,15 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.pocketide.data.model.Language
@@ -54,18 +54,15 @@ import com.pocketide.ui.components.ProjectSwitcherDialog
 import com.pocketide.ui.components.TerminalPanel
 import com.pocketide.ui.components.TopTabBar
 import com.pocketide.ui.editor.CodeEditorField
-import com.pocketide.ui.theme.ThemeViewModel
 
 @Composable
 fun EditorScreen(
     onNavigateToSettings: () -> Unit,
-    themeViewModel: ThemeViewModel,
     viewModel: EditorViewModel,
 ) {
     val state by viewModel.state.collectAsState()
-    val configuration = LocalConfiguration.current
-    val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
-    val isDark by themeViewModel.isDarkMode.collectAsState()
+    val containerSize = LocalWindowInfo.current.containerSize
+    val isLandscape = containerSize.width > containerSize.height
 
     Box(
         modifier = Modifier
@@ -76,14 +73,12 @@ fun EditorScreen(
             LandscapeLayout(
                 state = state,
                 viewModel = viewModel,
-                isDark = isDark,
                 onNavigateToSettings = onNavigateToSettings,
             )
         } else {
             PortraitLayout(
                 state = state,
                 viewModel = viewModel,
-                isDark = isDark,
                 onNavigateToSettings = onNavigateToSettings,
             )
         }
@@ -107,12 +102,11 @@ fun EditorScreen(
 private fun LandscapeLayout(
     state: EditorUiState,
     viewModel: EditorViewModel,
-    isDark: Boolean,
     onNavigateToSettings: () -> Unit,
 ) {
-    var explorerWidth by remember { mutableStateOf(320f) }
-    var terminalHeight by remember { mutableStateOf(300f) }
-    var aiWidth by remember { mutableStateOf(900f) }
+    var explorerWidth by remember { mutableFloatStateOf(320f) }
+    var terminalHeight by remember { mutableFloatStateOf(300f) }
+    var aiWidth by remember { mutableFloatStateOf(900f) }
     val density = LocalDensity.current
 
     Row(
@@ -159,11 +153,27 @@ private fun LandscapeLayout(
                         onSend = viewModel::sendMessage,
                         isGenerating = state.isGenerating,
                         onNewChat = viewModel::newChat,
+                        chatSessions = state.chatSessions,
+                        activeChatSessionId = state.activeChatSessionId,
+                        onOpenChatSession = viewModel::openChatSession,
+                        onDeleteChatSession = viewModel::deleteChatSession,
                         aiMode = state.aiMode,
                         onAiModeChange = viewModel::setAiMode,
                         modelMode = state.modelMode,
                         onModelModeChange = viewModel::setModelMode,
                         isThinking = state.isThinking,
+                        lastTokensPerSecond = state.lastTokensPerSecond,
+                        lastTtftMs = state.lastTtftMs,
+                        lastStrategy = state.lastStrategy,
+                        onExportBenchmark = viewModel::copyBenchmarkReportToClipboard,
+                        benchmarkRunning = state.benchmarkRunning,
+                        benchmarkCompletedRuns = state.benchmarkCompletedRuns,
+                        benchmarkTotalRuns = state.benchmarkTotalRuns,
+                        benchmarkSummary = state.benchmarkSummary,
+                        benchmarkError = state.benchmarkError,
+                        onRunBenchmark = viewModel::runBenchmarkSuite,
+                        onCopyBenchmarkJson = viewModel::copyBenchmarkJsonToClipboard,
+                        onClearBenchmark = viewModel::clearBenchmark,
                     )
                 } else {
                     ExtensionsPanel(
@@ -221,12 +231,25 @@ private fun LandscapeLayout(
                 TerminalPanel(
                     stdout = state.stdout,
                     stderr = state.stderr,
+                    warnings = state.warnings,
+                    errorLine = state.errorLine,
+                    errorColumn = state.errorColumn,
+                    errorType = state.errorType,
+                    durationMs = state.executionDurationMs,
                     status = state.executionStatus,
                     isExpanded = state.terminalExpanded,
                     onToggle = viewModel::toggleTerminal,
                     onRun = viewModel::runCode,
                     onRetry = viewModel::retryRepair,
-                    modifier = Modifier.height(with(density) { terminalHeight.toDp() }),
+                    waitingForInput = state.waitingForInput,
+                    inputPrompt = state.inputPrompt,
+                    onSubmitInput = viewModel::submitTerminalInput,
+                    onPreview = if (state.files.any { it.language.supportsWebPreview }) viewModel::previewWebProject else null,
+                    modifier = if (state.terminalExpanded) {
+                        Modifier.height(with(density) { terminalHeight.toDp() })
+                    } else {
+                        Modifier
+                    },
                 )
             }
 
@@ -321,11 +344,27 @@ private fun ColumnScope.LandscapeEditorArea(
                 onSend = viewModel::sendMessage,
                 isGenerating = state.isGenerating,
                 onNewChat = viewModel::newChat,
+                chatSessions = state.chatSessions,
+                activeChatSessionId = state.activeChatSessionId,
+                onOpenChatSession = viewModel::openChatSession,
+                onDeleteChatSession = viewModel::deleteChatSession,
                 aiMode = state.aiMode,
                 onAiModeChange = viewModel::setAiMode,
                 modelMode = state.modelMode,
                 onModelModeChange = viewModel::setModelMode,
                 isThinking = state.isThinking,
+                lastTokensPerSecond = state.lastTokensPerSecond,
+                lastTtftMs = state.lastTtftMs,
+                lastStrategy = state.lastStrategy,
+                onExportBenchmark = viewModel::copyBenchmarkReportToClipboard,
+                benchmarkRunning = state.benchmarkRunning,
+                benchmarkCompletedRuns = state.benchmarkCompletedRuns,
+                benchmarkTotalRuns = state.benchmarkTotalRuns,
+                benchmarkSummary = state.benchmarkSummary,
+                benchmarkError = state.benchmarkError,
+                onRunBenchmark = viewModel::runBenchmarkSuite,
+                onCopyBenchmarkJson = viewModel::copyBenchmarkJsonToClipboard,
+                onClearBenchmark = viewModel::clearBenchmark,
             )
         } else if (state.files.isEmpty()) {
             Text(
@@ -423,11 +462,27 @@ private fun AiChatOverlay(
                     onSend = viewModel::sendMessage,
                     isGenerating = state.isGenerating,
                     onNewChat = viewModel::newChat,
+                    chatSessions = state.chatSessions,
+                    activeChatSessionId = state.activeChatSessionId,
+                    onOpenChatSession = viewModel::openChatSession,
+                    onDeleteChatSession = viewModel::deleteChatSession,
                     aiMode = state.aiMode,
                     onAiModeChange = viewModel::setAiMode,
                     modelMode = state.modelMode,
                     onModelModeChange = viewModel::setModelMode,
                     isThinking = state.isThinking,
+                    lastTokensPerSecond = state.lastTokensPerSecond,
+                    lastTtftMs = state.lastTtftMs,
+                    lastStrategy = state.lastStrategy,
+                    onExportBenchmark = viewModel::copyBenchmarkReportToClipboard,
+                    benchmarkRunning = state.benchmarkRunning,
+                    benchmarkCompletedRuns = state.benchmarkCompletedRuns,
+                    benchmarkTotalRuns = state.benchmarkTotalRuns,
+                    benchmarkSummary = state.benchmarkSummary,
+                    benchmarkError = state.benchmarkError,
+                    onRunBenchmark = viewModel::runBenchmarkSuite,
+                    onCopyBenchmarkJson = viewModel::copyBenchmarkJsonToClipboard,
+                    onClearBenchmark = viewModel::clearBenchmark,
                 )
             }
         }
@@ -440,11 +495,10 @@ private fun AiChatOverlay(
 private fun PortraitLayout(
     state: EditorUiState,
     viewModel: EditorViewModel,
-    isDark: Boolean,
     onNavigateToSettings: () -> Unit,
 ) {
-    var explorerWidth by remember { mutableStateOf(280f) }
-    var terminalHeight by remember { mutableStateOf(320f) }
+    var explorerWidth by remember { mutableFloatStateOf(280f) }
+    var terminalHeight by remember { mutableFloatStateOf(320f) }
     val density = LocalDensity.current
 
     Column(
@@ -522,11 +576,27 @@ private fun PortraitLayout(
                             onSend = viewModel::sendMessage,
                             isGenerating = state.isGenerating,
                             onNewChat = viewModel::newChat,
+                            chatSessions = state.chatSessions,
+                            activeChatSessionId = state.activeChatSessionId,
+                            onOpenChatSession = viewModel::openChatSession,
+                            onDeleteChatSession = viewModel::deleteChatSession,
                             aiMode = state.aiMode,
                             onAiModeChange = viewModel::setAiMode,
                             modelMode = state.modelMode,
                             onModelModeChange = viewModel::setModelMode,
                             isThinking = state.isThinking,
+                            lastTokensPerSecond = state.lastTokensPerSecond,
+                            lastTtftMs = state.lastTtftMs,
+                            lastStrategy = state.lastStrategy,
+                            onExportBenchmark = viewModel::copyBenchmarkReportToClipboard,
+                            benchmarkRunning = state.benchmarkRunning,
+                            benchmarkCompletedRuns = state.benchmarkCompletedRuns,
+                            benchmarkTotalRuns = state.benchmarkTotalRuns,
+                            benchmarkSummary = state.benchmarkSummary,
+                            benchmarkError = state.benchmarkError,
+                            onRunBenchmark = viewModel::runBenchmarkSuite,
+                            onCopyBenchmarkJson = viewModel::copyBenchmarkJsonToClipboard,
+                            onClearBenchmark = viewModel::clearBenchmark,
                         )
                     }
                 } else if (state.activeTab == ActivityTab.EXTENSIONS) {
@@ -582,11 +652,20 @@ private fun PortraitLayout(
                     TerminalPanel(
                         stdout = state.stdout,
                         stderr = state.stderr,
+                        warnings = state.warnings,
+                        errorLine = state.errorLine,
+                        errorColumn = state.errorColumn,
+                        errorType = state.errorType,
+                        durationMs = state.executionDurationMs,
                         status = state.executionStatus,
                         isExpanded = state.terminalExpanded,
                         onToggle = viewModel::toggleTerminal,
                         onRun = viewModel::runCode,
                         onRetry = viewModel::retryRepair,
+                        waitingForInput = state.waitingForInput,
+                        inputPrompt = state.inputPrompt,
+                        onSubmitInput = viewModel::submitTerminalInput,
+                        onPreview = if (state.files.any { it.language.supportsWebPreview }) viewModel::previewWebProject else null,
                         modifier = if (state.terminalExpanded) {
                             Modifier.height(with(density) { terminalHeight.toDp() })
                         } else {

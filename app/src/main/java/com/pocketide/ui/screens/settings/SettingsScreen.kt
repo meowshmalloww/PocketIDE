@@ -1,5 +1,7 @@
 package com.pocketide.ui.screens.settings
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -62,6 +64,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -81,6 +84,7 @@ import com.pocketide.data.ai.AiConfig
 import com.pocketide.data.ai.AiConfigRepository
 import com.pocketide.data.ai.ModelDownloader
 import com.pocketide.data.ai.ModelEntry
+import com.pocketide.data.ai.ModelFileImporter
 import com.pocketide.data.ai.PromptTemplate
 import com.pocketide.data.ai.Quantization
 import com.pocketide.data.model.Language
@@ -112,7 +116,7 @@ fun SettingsScreen(
         "Agent" to Icons.Filled.Security,
         "Sandbox Languages" to Icons.Filled.Recommend,
     )
-    var selectedSection by remember { mutableStateOf(0) }
+    var selectedSection by remember { mutableIntStateOf(0) }
 
     Column(
         modifier = Modifier
@@ -244,7 +248,7 @@ private fun SettingsContent(
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
         Text(
-            text = "Quantization",
+            text = "Model quantization label",
             style = MaterialTheme.typography.labelSmall.copy(
                 fontWeight = FontWeight.SemiBold,
             ),
@@ -262,6 +266,11 @@ private fun SettingsContent(
                 )
             }
         }
+        Text(
+            text = "PocketIDE does not quantize after import. Select the label matching the actual GGUF/PTE artifact used for benchmark comparisons.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         StatusPill(
             text = when {
                 aiConfig.isConfigured -> "${aiConfig.modelFormat.displayName} model configured"
@@ -296,7 +305,7 @@ private fun SettingsContent(
         IconToggleRow(
             icon = Icons.Filled.Speed,
             title = "Adaptive cores",
-            subtitle = "Dynamically use optimal CPU cores",
+            subtitle = "Apply a device-aware worker-thread count to the native runtime",
             checked = aiConfig.adaptiveCores,
             onCheckedChange = { value -> onPersist { it.copy(adaptiveCores = value) } },
         )
@@ -422,24 +431,34 @@ private fun SettingsContent(
     // Sandbox Languages
     SectionHeader("Sandbox Languages")
     SettingsGroup {
-        val enabledLanguages = remember { mutableStateOf(Language.entries.toSet()) }
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Language.entries.forEach { language ->
-                val enabled = language in enabledLanguages.value
-                SelectableChip(
-                    selected = enabled,
-                    label = language.displayName,
-                    onClick = {
-                        enabledLanguages.value = if (enabled) {
-                            enabledLanguages.value - language
-                        } else {
-                            enabledLanguages.value + language
+        Text(
+            text = "PocketIDE edits all listed formats. Runtime labels below describe what can actually execute on this device.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Language.entries.groupBy { it.executionSupport }.forEach { (support, languages) ->
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = support.label,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = languages.joinToString(" · ") { language ->
+                        buildString {
+                            append(language.displayName)
+                            if (language.supportsHardwareBridge) append(" + hardware")
+                            if (language.supportsWebPreview && language.executionSupport.name != "PREVIEW") append(" + preview")
                         }
                     },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = support.description,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
@@ -598,6 +617,7 @@ private fun ModelManagerSection(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val downloader = remember { ModelDownloader(context) }
+    val fileImporter = remember { ModelFileImporter(context) }
 
     var showAddForm by remember { mutableStateOf(false) }
     var showDownloadForm by remember { mutableStateOf(false) }
@@ -606,12 +626,47 @@ private fun ModelManagerSection(
     var downloadError by remember { mutableStateOf<String?>(null) }
     var dlUrl by remember { mutableStateOf("") }
     var dlName by remember { mutableStateOf("") }
-    var dlTemplate by remember { mutableStateOf(PromptTemplate.LLAMA3) }
+    var dlTemplate by remember { mutableStateOf(PromptTemplate.AUTO) }
 
     var newName by remember { mutableStateOf("") }
     var newPath by remember { mutableStateOf("") }
     var newTokenizer by remember { mutableStateOf("") }
-    var newTemplate by remember { mutableStateOf(PromptTemplate.LLAMA3) }
+    var newTemplate by remember { mutableStateOf(PromptTemplate.AUTO) }
+    var importError by remember { mutableStateOf<String?>(null) }
+    var isImporting by remember { mutableStateOf(false) }
+
+    val modelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                isImporting = true
+                importError = null
+                fileImporter.import(uri, requireModelExtension = true)
+                    .onSuccess { imported ->
+                        fileImporter.deleteImported(newPath)
+                        newPath = imported.internalPath
+                        newName = prettyModelName(imported.displayName)
+                        newTemplate = detectPromptTemplate(imported.displayName)
+                    }
+                    .onFailure { importError = it.message ?: "Model import failed" }
+                isImporting = false
+            }
+        }
+    }
+    val tokenizerPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                isImporting = true
+                importError = null
+                fileImporter.import(uri, requireModelExtension = false)
+                    .onSuccess {
+                        fileImporter.deleteImported(newTokenizer)
+                        newTokenizer = it.internalPath
+                    }
+                    .onFailure { importError = it.message ?: "Tokenizer import failed" }
+                isImporting = false
+            }
+        }
+    }
 
     // List existing models
     if (models.isNotEmpty()) {
@@ -648,14 +703,24 @@ private fun ModelManagerSection(
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        text = model.modelPath,
+                        text = buildString {
+                            append(model.modelPath.substringAfterLast('/').substringAfterLast('\\'))
+                            append(" · ")
+                            append(model.format.displayName)
+                            append(" · ")
+                            append(model.promptTemplate.displayName)
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                     )
                 }
                 IconButton(
-                    onClick = { onRemoveModel(index) },
+                    onClick = {
+                        fileImporter.deleteImported(model.modelPath)
+                        fileImporter.deleteImported(model.tokenizerPath)
+                        onRemoveModel(index)
+                    },
                     modifier = Modifier.size(32.dp),
                 ) {
                     Icon(
@@ -781,7 +846,7 @@ private fun ModelManagerSection(
                             showDownloadForm = false
                             dlUrl = ""
                             dlName = ""
-                            dlTemplate = PromptTemplate.LLAMA3
+                            dlTemplate = PromptTemplate.AUTO
                         },
                     ) {
                         Text("Cancel")
@@ -811,7 +876,7 @@ private fun ModelManagerSection(
                                     showDownloadForm = false
                                     dlUrl = ""
                                     dlName = ""
-                                    dlTemplate = PromptTemplate.LLAMA3
+                                    dlTemplate = PromptTemplate.AUTO
                                 }
                                 is ModelDownloader.DownloadResult.Error -> {
                                     downloadError = result.message
@@ -875,44 +940,27 @@ private fun ModelManagerSection(
                     cursorColor = MaterialTheme.colorScheme.primary,
                 ),
             )
-            OutlinedTextField(
-                value = newPath,
-                onValueChange = { newPath = it },
-                label = { Text("Model file path", style = MaterialTheme.typography.labelSmall) },
-                placeholder = { Text("/sdcard/models/model.gguf or .pte") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                textStyle = MaterialTheme.typography.bodySmall,
-                shape = RoundedCornerShape(12.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                    unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                    focusedBorderColor = MaterialTheme.colorScheme.outline,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                    cursorColor = MaterialTheme.colorScheme.primary,
-                ),
+            FilePickerRow(
+                label = "Model file (.gguf or .pte)",
+                selectedFile = newPath.substringAfterLast('/').substringAfterLast('\\').ifBlank { null },
+                enabled = !isImporting,
+                onClick = { modelPicker.launch(arrayOf("*/*")) },
             )
-            OutlinedTextField(
-                value = newTokenizer,
-                onValueChange = { newTokenizer = it },
-                label = { Text("Tokenizer path (PTE only)", style = MaterialTheme.typography.labelSmall) },
-                placeholder = { Text("/sdcard/models/tokenizer.bin") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                textStyle = MaterialTheme.typography.bodySmall,
-                shape = RoundedCornerShape(12.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                    unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                    focusedBorderColor = MaterialTheme.colorScheme.outline,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                    cursorColor = MaterialTheme.colorScheme.primary,
-                ),
-            )
+            if (newPath.endsWith(".pte", ignoreCase = true)) {
+                FilePickerRow(
+                    label = "Tokenizer file (required for .pte)",
+                    selectedFile = newTokenizer.substringAfterLast('/').substringAfterLast('\\').ifBlank { null },
+                    enabled = !isImporting,
+                    onClick = { tokenizerPicker.launch(arrayOf("*/*")) },
+                )
+            }
+            if (isImporting) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Text("Copying into PocketIDE private storage…", style = MaterialTheme.typography.labelSmall)
+            }
+            importError?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+            }
             Text(
                 text = "Prompt template",
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
@@ -927,17 +975,24 @@ private fun ModelManagerSection(
                     )
                 }
             }
+            Text(
+                text = "Auto uses the model filename to select Qwen ChatML or Llama formatting; unknown families use plain formatting.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 androidx.compose.material3.TextButton(
                     onClick = {
+                        fileImporter.deleteImported(newPath)
+                        fileImporter.deleteImported(newTokenizer)
                         showAddForm = false
                         newName = ""
                         newPath = ""
                         newTokenizer = ""
-                        newTemplate = PromptTemplate.LLAMA3
+                        newTemplate = PromptTemplate.AUTO
                     },
                 ) {
                     Text("Cancel")
@@ -957,10 +1012,11 @@ private fun ModelManagerSection(
                             newName = ""
                             newPath = ""
                             newTokenizer = ""
-                            newTemplate = PromptTemplate.LLAMA3
+                            newTemplate = PromptTemplate.AUTO
                         }
                     },
-                    enabled = newName.isNotBlank() && newPath.isNotBlank(),
+                    enabled = newName.isNotBlank() && newPath.isNotBlank() &&
+                        (!newPath.endsWith(".pte", ignoreCase = true) || newTokenizer.isNotBlank()),
                 ) {
                     Text("Save")
                 }
@@ -991,6 +1047,57 @@ private fun ModelManagerSection(
         }
     }
 }
+
+@Composable
+private fun FilePickerRow(
+    label: String,
+    selectedFile: String?,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.CreateNewFolder,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+            Text(
+                selectedFile ?: "Tap to choose a file",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Icon(Icons.Filled.ChevronRight, contentDescription = null, modifier = Modifier.size(18.dp))
+    }
+}
+
+private fun detectPromptTemplate(fileName: String): PromptTemplate {
+    val normalized = fileName.lowercase()
+    return when {
+        "qwen" in normalized || "chatml" in normalized -> PromptTemplate.QWEN
+        "llama" in normalized || "smollm" in normalized -> PromptTemplate.LLAMA3
+        else -> PromptTemplate.AUTO
+    }
+}
+
+private fun prettyModelName(fileName: String): String = fileName
+    .substringBeforeLast('.', fileName)
+    .replace(Regex("[-_]+"), " ")
+    .trim()
 
 @Composable
 private fun SelectableChip(
