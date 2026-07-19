@@ -22,6 +22,8 @@ data class ThreadCalibration(
     val medianTokensPerSecond: Float,
     val averageTtftMs: Long,
     val averagePeakProcessPssBytes: Long,
+    val comparisonThreadCount: Int? = null,
+    val comparisonMedianTokensPerSecond: Float? = null,
     val measuredAtMs: Long = System.currentTimeMillis(),
 )
 
@@ -29,8 +31,8 @@ data class ThreadCalibration(
  * Selects a sustainable decode profile from real measurements.
  *
  * Results within 1% of the fastest median are treated as measurement noise. In that
- * band, lower process memory and then fewer threads win. This avoids spending extra
- * memory/energy for a difference too small to defend from three short mobile samples.
+ * band, fewer threads win before sampled process memory. PSS snapshots are useful evidence but
+ * are too sensitive to page-cache reclamation and run order to break a near-tie reliably.
  */
 object ThreadProfileSelector {
     private const val NEAR_FASTEST_RATIO = 0.99f
@@ -54,7 +56,7 @@ object ThreadProfileSelector {
         val fastest = profiles.maxOfOrNull { it.medianTps } ?: return null
         val selected = profiles
             .filter { it.medianTps >= fastest * NEAR_FASTEST_RATIO }
-            .minWithOrNull(compareBy<Profile> { it.averagePssBytes }.thenBy { it.threads })
+            .minWithOrNull(compareBy<Profile> { it.threads }.thenBy { it.averagePssBytes })
             ?: return null
         return ThreadCalibration(
             threadCount = selected.threads,
@@ -95,6 +97,9 @@ class ThreadCalibrationRepository(context: Context) {
                 medianTokensPerSecond = json.getDouble("median_tps").toFloat(),
                 averageTtftMs = json.getLong("average_ttft_ms"),
                 averagePeakProcessPssBytes = json.getLong("average_pss_bytes"),
+                comparisonThreadCount = json.optInt("comparison_threads", -1).takeIf { it > 0 },
+                comparisonMedianTokensPerSecond = json.optDouble("comparison_median_tps", Double.NaN)
+                    .takeIf { it.isFinite() && it > 0.0 }?.toFloat(),
                 measuredAtMs = json.getLong("measured_at_ms"),
             )
         }.getOrNull()?.takeIf {
@@ -108,6 +113,11 @@ class ThreadCalibrationRepository(context: Context) {
             .put("median_tps", calibration.medianTokensPerSecond.toDouble())
             .put("average_ttft_ms", calibration.averageTtftMs)
             .put("average_pss_bytes", calibration.averagePeakProcessPssBytes)
+            .put("comparison_threads", calibration.comparisonThreadCount ?: JSONObject.NULL)
+            .put(
+                "comparison_median_tps",
+                calibration.comparisonMedianTokensPerSecond?.toDouble() ?: JSONObject.NULL,
+            )
             .put("measured_at_ms", calibration.measuredAtMs)
         prefs.edit { putString(key(modelPath), json.toString()) }
     }
@@ -119,11 +129,14 @@ class ThreadCalibrationRepository(context: Context) {
     private fun key(modelPath: String): String {
         val model = File(modelPath)
         val identity = buildString {
+            append(CALIBRATION_KEY_SCHEMA).append('|')
             append(Build.MANUFACTURER).append('|')
             append(Build.MODEL).append('|')
             append(Build.DEVICE).append('|')
             append(Build.VERSION.SDK_INT).append('|')
             append(Runtime.getRuntime().availableProcessors()).append('|')
+            append(BackendInfo.llamaCppNativeLibrary).append('|')
+            append(LLAMA_CPP_WRAPPER_VERSION).append('|')
             append(model.absolutePath).append('|')
             append(model.length()).append('|')
             append(model.lastModified())
@@ -134,5 +147,8 @@ class ThreadCalibrationRepository(context: Context) {
 
     companion object {
         private const val PREFS_NAME = "pocketide_thread_calibration"
+        // Schema 4 invalidates profiles produced by the old per-generation thread sweep.
+        private const val CALIBRATION_KEY_SCHEMA = 4
+        private const val LLAMA_CPP_WRAPPER_VERSION = "0.4.0"
     }
 }

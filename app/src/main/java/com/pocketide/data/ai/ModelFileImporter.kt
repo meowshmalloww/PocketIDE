@@ -40,10 +40,17 @@ class ModelFileImporter(private val context: Context) {
 
     fun deleteImported(path: String): Boolean = runCatching {
         if (path.isBlank()) return@runCatching false
-        val root = File(context.filesDir, "models").canonicalFile
         val target = File(path).canonicalFile
-        val insideRoot = target.path == root.path || target.path.startsWith(root.path + File.separator)
-        insideRoot && target.delete()
+        val roots = buildList {
+            add(File(context.filesDir, "models").canonicalFile)
+            context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)?.let {
+                add(File(it, "models").canonicalFile)
+            }
+        }
+        val insideManagedRoot = roots.any { root ->
+            target.path == root.path || target.path.startsWith(root.path + File.separator)
+        }
+        insideManagedRoot && target.delete()
     }.getOrDefault(false)
 
     private fun queryDisplayName(uri: Uri): String {

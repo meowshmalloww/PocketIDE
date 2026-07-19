@@ -23,23 +23,32 @@ AI modes:
 
 ## Arm optimization
 
-PocketIDE measures real inference performance instead of assuming that more CPU threads are faster. Its benchmark runs equal warmup and measured generations across 1–4 llama.cpp thread profiles, selects the fastest measured profile, and saves the result for that exact phone and model file.
+PocketIDE measures real inference performance instead of assuming that more CPU threads are faster. For GGUF, **Quick** tests profiles up to 4 llama.cpp threads plus the device heuristic; **Deep evidence** screens up to 8 and confirms the finalists. **Sustained evidence** repeats real generations on the selected profile and reports first-half versus second-half speed retention, battery temperature, Android thermal state, and public fuel-gauge energy when the phone exposes it. The winner is saved for that exact phone, model file, runtime version, and loader-selected Arm native library. PTE models use a separate fixed-backend ExecuTorch protocol because thread and delegate choices are embedded during export.
+
+For GGUF files, PocketIDE reads architecture, context, layer, embedding, attention head, and KV head metadata directly from the GGUF header before native loading. This keeps memory planning model aware across different model names and quantizations, with a conservative fallback when metadata is unavailable.
+
+GGUF runs also include llama.cpp's real native prompt-processing (`pp128`) and token-generation (`tg32`) microbenchmark. PTE runs use exact counters emitted by ExecuTorch and reset KV state between repetitions. The in-app Summary shows video-ready cards for decode speed, TTFT, selected CPU profile, process PSS, sustained retention, device energy, temperature, and native throughput. Report and JSON retain the full evidence. Warmups are excluded and unverified acceleration claims are marked.
+
+Energy values come from Android `BatteryManager` and describe the whole phone, not PocketIDE alone. Charging runs hide energy attribution. A device may expose energy, charge, current, or none of those counters.
 
 Normal inference also responds to thermal state, battery level, and memory pressure by reducing thread count or generation length when needed.
 
-### Physical-device result
+Before native loading, PocketIDE selects one shared context, batch size, and output cap from Android system memory. Normal chat and benchmarks reuse that profile so a benchmark cannot silently load a much smaller context than the real coding workflow. Unsafe cold loads are stopped before native allocation, and Android process exit evidence is included in later reports when available.
 
-Tested on an LGE LM-Q620 running Android 12 with Qwen2.5-Coder 1.5B Instruct Q4_0:
+### Physical-device evidence
+
+Schema 9 was measured on an LGE LM-Q620 running Android 12 with Qwen2.5-Coder 1.5B Instruct Q4_0 GGUF. The corrected protocol recreates the native context for every load-configured thread profile and invalidates older calibrations that did not reload the context.
 
 | Metric | Previous 4-thread heuristic | Calibrated 2-thread profile | Change |
 |---|---:|---:|---:|
-| Decode throughput | 8.24 tok/s | 11.67 tok/s | **+41.6%** |
-| Average TTFT | 115 ms | 104 ms | **-9.6%** |
-| Average steady process PSS | 1880 MB | 2014 MB | +7.1% |
+| Median decode throughput | 8.12 tok/s | 11.73 tok/s | **+44.4%** |
+| Median TTFT | 132 ms | 87 ms | **-34.1%** |
+| Mean process CPU time per output token | 445.6 ms | 169.4 ms | **-62.0%** |
+| Mean maximum sampled process PSS | 1780.7 MB | 1915.5 MB | +7.6% |
 
-Benchmark protocol: one warmup and three measured 96-token generations per profile, 16 total runs. The phone loaded `librnllama_v8_2_dotprod.so`, selected at runtime from its Arm CPU features.
+The CPU-time result is derived from process CPU counters in the same Deep report and is not a battery-energy claim. Decode timing starts after the first emitted token. TTFT excludes model loading and prompt formatting, and the fixed benchmark prompt may reuse the runtime prefix cache after warmup. Thread values are load configured because the wrapper does not expose the native live worker count. The run used the loader-selected `librnllama_v8_2_dotprod.so` CPU library with zero GPU layers; PocketIDE does not claim NPU, GPU, KleidiAI-kernel, or ExecuTorch-delegate acceleration without runtime proof.
 
-The selected profile maximizes decode speed. It is not claimed to minimize memory at the same time.
+The separate Sustained run retained 102.5% of first-half throughput, with the selected profile at 11.48 tok/s versus 8.20 tok/s for four threads. See [the evidence summary and protocol](docs/BENCHMARK_EVIDENCE.md).
 
 ## Language support
 
@@ -106,6 +115,14 @@ The debug APK is generated at:
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
+For a smaller phone-only APK that excludes x86 emulator libraries:
+
+```powershell
+.\gradlew.bat --project-prop "pocketide.abi=arm64-v8a" assembleDebug
+```
+
+The default build continues to include `arm64-v8a` and `x86_64` so emulator verification still works.
+
 Install it with Android Studio, `installDebug`, or ADB:
 
 ```bash
@@ -140,7 +157,7 @@ Include priorities, filters, completion statistics, and localStorage persistence
 Use no frameworks or network access.
 ```
 
-To calibrate inference, open AI Chat, tap the benchmark button, run the suite, and export the text and JSON reports.
+To calibrate inference, open AI Chat, tap the benchmark button, choose **Quick**, **Deep evidence**, or **Sustained evidence**, and scroll the Summary, Report, or JSON directly in the app. Run Quick first, unplug the phone, let it cool, and then run Sustained for the cleanest thermal and device-energy comparison. Both export formats can also be copied.
 
 ## Verification
 
@@ -153,12 +170,16 @@ To calibrate inference, open AI Chat, tap the benchmark button, run the suite, a
 
 Current verification:
 
-- 114 JVM/Robolectric tests passed
-- 9 Android instrumented tests passed
-- Debug lint passed
-- Debug APK assembly passed
+- 162 JVM/Robolectric tests passed with no failures or skips
+- 16 Android instrumentation tests passed on the Android emulator, including CPython input and imports, JavaScript, the TypeScript subset, Lua, SQL, Shell, BeanShell Java, terminal input, localhost preview, the Android hardware bridge, benchmark cards, and benchmark cancellation
+- Debug lint completed with 0 errors
+- Debug and release APK assembly passed
+
+The emulator validates application behavior, not Arm inference speed, power, sensors, or thermal behavior. Those final measurements must be captured on the target physical phone.
 
 Physical-device testing instructions are in [docs/PHYSICAL_DEVICE_TEST_PLAN.md](docs/PHYSICAL_DEVICE_TEST_PLAN.md).
+
+The short recording prompts and order are in [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md). Paste ready submission text is in [docs/DEVPOST_SUBMISSION.md](docs/DEVPOST_SUBMISSION.md).
 
 ## Main technologies
 

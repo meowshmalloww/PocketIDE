@@ -1,5 +1,6 @@
 package com.pocketide.ui.components
 
+import android.content.ClipData
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -28,14 +30,18 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -53,20 +59,39 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.pocketide.R
+import com.pocketide.data.ai.BenchmarkDashboard
+import com.pocketide.data.ai.BenchmarkDashboardMetric
+import com.pocketide.data.ai.BenchmarkDepth
+import com.pocketide.data.ai.InferencePhase
+import com.pocketide.data.ai.PreviousProcessExit
 import com.pocketide.data.model.AiMode
 import com.pocketide.data.model.AgentStatus
 import com.pocketide.data.model.ChatMessage
 import com.pocketide.data.model.ChatSessionSummary
 import com.pocketide.data.model.MessageRole
 import com.pocketide.data.model.ModelMode
+import kotlinx.coroutines.launch
+
+private enum class BenchmarkTab(val label: String) {
+    SUMMARY("Summary"),
+    REPORT("Report"),
+    JSON("JSON"),
+}
 
 @Composable
 fun AiChatPanel(
@@ -76,6 +101,7 @@ fun AiChatPanel(
     onSend: () -> Unit,
     isGenerating: Boolean,
     modifier: Modifier = Modifier,
+    onStopGeneration: () -> Unit = {},
     onNewChat: () -> Unit = {},
     chatSessions: List<ChatSessionSummary> = emptyList(),
     activeChatSessionId: String? = null,
@@ -86,6 +112,9 @@ fun AiChatPanel(
     modelMode: ModelMode = ModelMode.SINGLE,
     onModelModeChange: (ModelMode) -> Unit = {},
     isThinking: Boolean = false,
+    inferencePhase: InferencePhase = InferencePhase.IDLE,
+    previousProcessExit: PreviousProcessExit? = null,
+    onDismissPreviousProcessExit: () -> Unit = {},
     lastTokensPerSecond: Float? = null,
     lastTtftMs: Long? = null,
     lastStrategy: String? = null,
@@ -93,14 +122,23 @@ fun AiChatPanel(
     benchmarkRunning: Boolean = false,
     benchmarkCompletedRuns: Int = 0,
     benchmarkTotalRuns: Int = 0,
-    benchmarkSummary: String? = null,
+    benchmarkPhase: String? = null,
+    benchmarkSummary: BenchmarkDashboard? = null,
+    benchmarkReport: String? = null,
+    benchmarkJson: String? = null,
     benchmarkError: String? = null,
-    onRunBenchmark: () -> Unit = {},
+    onRunBenchmark: (BenchmarkDepth) -> Unit = {},
+    onStopBenchmark: () -> Unit = {},
     onCopyBenchmarkJson: () -> Unit = {},
     onClearBenchmark: () -> Unit = {},
 ) {
     var historyExpanded by remember { mutableStateOf(false) }
     var benchmarkOpen by remember { mutableStateOf(false) }
+    var benchmarkDepth by rememberSaveable { mutableStateOf(BenchmarkDepth.QUICK) }
+    var benchmarkTab by rememberSaveable { mutableStateOf(BenchmarkTab.SUMMARY) }
+    LaunchedEffect(benchmarkSummary) {
+        if (benchmarkSummary != null) benchmarkTab = BenchmarkTab.SUMMARY
+    }
     if (benchmarkOpen) {
         AlertDialog(
             onDismissRequest = { if (!benchmarkRunning) benchmarkOpen = false },
@@ -108,13 +146,34 @@ fun AiChatPanel(
             text = {
                 Column(
                     modifier = Modifier
-                        .heightIn(max = 420.dp)
+                        .heightIn(max = 560.dp)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Text(
-                        "Calibrates real llama.cpp decode across 1–4 threads (plus the device heuristic). Each profile gets 1 warmup and 3 equal measured runs; output is capped at 96 tokens and the actual count is reported.",
+                        "Every score comes from the selected on-device model running on this device.",
                         style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        BenchmarkDepth.entries.forEach { depth ->
+                            TextButton(
+                                onClick = { benchmarkDepth = depth },
+                                enabled = !benchmarkRunning,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                val shortLabel = when (depth) {
+                                    BenchmarkDepth.QUICK -> "Quick"
+                                    BenchmarkDepth.DEEP -> "Deep"
+                                    BenchmarkDepth.SUSTAINED -> "Sustain"
+                                }
+                                Text(if (benchmarkDepth == depth) "● $shortLabel" else shortLabel)
+                            }
+                        }
+                    }
+                    Text(
+                        "${benchmarkDepth.displayName}: ${benchmarkDepth.description}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     if (benchmarkRunning) {
                         LinearProgressIndicator(
@@ -125,23 +184,66 @@ fun AiChatPanel(
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Text("Run $benchmarkCompletedRuns of $benchmarkTotalRuns", style = MaterialTheme.typography.labelSmall)
-                    }
-                    benchmarkSummary?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                        benchmarkPhase?.let { phase ->
+                            Text(phase, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        }
                     }
                     benchmarkError?.let {
                         Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     }
+                    if (benchmarkSummary != null) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            BenchmarkTab.entries.forEach { tab ->
+                                TextButton(onClick = { benchmarkTab = tab }) {
+                                    Text(
+                                        tab.label,
+                                        fontWeight = if (benchmarkTab == tab) FontWeight.Bold else FontWeight.Normal,
+                                    )
+                                }
+                            }
+                        }
+                        when (benchmarkTab) {
+                            BenchmarkTab.SUMMARY -> BenchmarkDashboardContent(benchmarkSummary)
+                            BenchmarkTab.REPORT -> SelectionContainer {
+                                Text(
+                                    benchmarkReport ?: "Report unavailable",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp,
+                                )
+                            }
+                            BenchmarkTab.JSON -> SelectionContainer {
+                                Text(
+                                    benchmarkJson ?: "{}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 9.sp,
+                                )
+                            }
+                        }
+                    }
                     Text(
-                        "The fastest stable profile is saved for normal GGUF chat on this device and model. Emulator results verify correctness only; submit Arm phone measurements.",
+                        "Warmups are excluded. End-to-end chat and native kernel measurements stay separate, and unverified acceleration claims are marked explicitly.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             },
             confirmButton = {
-                Button(onClick = onRunBenchmark, enabled = !benchmarkRunning) {
-                    Text(if (benchmarkSummary == null) "Run benchmark" else "Run again")
+                Button(
+                    onClick = {
+                        if (benchmarkRunning) onStopBenchmark() else onRunBenchmark(benchmarkDepth)
+                    },
+                ) {
+                    Text(
+                        if (benchmarkRunning) {
+                            "Stop"
+                        } else if (benchmarkSummary == null) {
+                            "Run ${benchmarkDepth.displayName}"
+                        } else {
+                            "Run again"
+                        },
+                    )
                 }
             },
             dismissButton = {
@@ -293,6 +395,42 @@ fun AiChatPanel(
             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
         )
 
+        previousProcessExit?.let { exit ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.72f))
+                    .padding(start = 14.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Previous run: ${exit.category.displayName}",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    Text(
+                        text = exit.userMessage(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+                IconButton(
+                    onClick = onDismissPreviousProcessExit,
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Dismiss previous exit notice",
+                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+
         // Message list or empty state
         Box(
             modifier = Modifier
@@ -320,11 +458,10 @@ fun AiChatPanel(
                     }
                     if (isGenerating) {
                         item {
-                            if (isThinking) {
-                                ThinkingIndicator()
-                            } else {
-                                GeneratingIndicator()
-                            }
+                            InferenceIndicator(
+                                label = inferencePhase.displayName,
+                                prominent = isThinking,
+                            )
                         }
                     }
                 }
@@ -353,7 +490,7 @@ fun AiChatPanel(
                     style = MaterialTheme.typography.bodySmall,
                 )
             },
-            enabled = !isGenerating && !benchmarkRunning,
+            readOnly = isGenerating || benchmarkRunning,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -362,15 +499,16 @@ fun AiChatPanel(
             shape = RoundedCornerShape(12.dp),
             trailingIcon = {
                 IconButton(
-                    onClick = onSend,
-                    enabled = !isGenerating && !benchmarkRunning && inputText.isNotBlank(),
+                    onClick = { if (isGenerating) onStopGeneration() else onSend() },
+                    enabled = isGenerating || (!benchmarkRunning && inputText.isNotBlank()),
                     modifier = Modifier.size(32.dp),
                 ) {
                     if (isGenerating) {
-                        CircularProgressIndicator(
+                        Icon(
+                            imageVector = Icons.Filled.StopCircle,
+                            contentDescription = "Stop generation",
+                            tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onSurface,
                         )
                     } else {
                         Icon(
@@ -395,6 +533,97 @@ fun AiChatPanel(
                 unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                 cursorColor = MaterialTheme.colorScheme.primary,
             ),
+        )
+    }
+}
+
+@Composable
+private fun BenchmarkDashboardContent(summary: BenchmarkDashboard) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = summary.title,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+        )
+        Text(
+            text = summary.headline,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.SemiBold,
+        )
+        summary.metrics.chunked(2).forEach { rowMetrics ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                rowMetrics.forEach { metric ->
+                    BenchmarkMetricCard(metric = metric, modifier = Modifier.weight(1f))
+                }
+                if (rowMetrics.size == 1) Spacer(modifier = Modifier.weight(1f))
+            }
+        }
+        DashboardEvidence(
+            label = stringResource(R.string.benchmark_arm_runtime),
+            value = summary.armRuntimeEvidence,
+        )
+        DashboardEvidence(
+            label = stringResource(R.string.benchmark_resource_plan),
+            value = summary.resourcePlanEvidence,
+        )
+        Text(
+            text = summary.integrityNote,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            text = summary.energyDisclosure,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun BenchmarkMetricCard(
+    metric: BenchmarkDashboardMetric,
+    modifier: Modifier = Modifier,
+) {
+    Card(modifier = modifier) {
+        Column(
+            modifier = Modifier.padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = metric.label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = metric.value,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = metric.detail,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DashboardEvidence(label: String, value: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = FontFamily.Monospace,
         )
     }
 }
@@ -598,6 +827,8 @@ private fun EmptyAiState() {
 private fun MessageBubble(
     message: ChatMessage,
 ) {
+    val clipboard = LocalClipboard.current
+    val clipboardScope = rememberCoroutineScope()
     val isUser = message.role == MessageRole.USER
     val alignment = if (isUser) Alignment.CenterEnd else Alignment.CenterStart
     val bubbleColor = if (isUser) {
@@ -638,6 +869,20 @@ private fun MessageBubble(
                 )
             }
         }
+        TextButton(
+            onClick = {
+                clipboardScope.launch {
+                    clipboard.setClipEntry(
+                        ClipEntry(ClipData.newPlainText("PocketIDE message", message.content)),
+                    )
+                }
+            },
+            modifier = Modifier.align(if (isUser) Alignment.End else Alignment.Start),
+        ) {
+            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("Copy")
+        }
         // Benchmark metrics under assistant messages
         if (!isUser && message.tokensPerSecond != null) {
             val metrics = buildString {
@@ -675,11 +920,13 @@ private fun MessageContent(
     Column {
         parts.forEachIndexed { index, text ->
             if (text.isNotBlank()) {
-                Text(
-                    text = text.trim(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = textColor,
-                )
+                SelectionContainer {
+                    Text(
+                        text = text.trim(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = textColor,
+                    )
+                }
             }
             if (index < codeBlocks.size) {
                 CodeBlock(code = codeBlocks[index])
@@ -691,6 +938,8 @@ private fun MessageContent(
 @Composable
 private fun CodeBlock(code: String) {
     val scrollState = rememberScrollState()
+    val clipboard = LocalClipboard.current
+    val clipboardScope = rememberCoroutineScope()
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -699,19 +948,39 @@ private fun CodeBlock(code: String) {
             .background(MaterialTheme.colorScheme.background)
             .padding(12.dp),
     ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            TextButton(
+                onClick = {
+                    clipboardScope.launch {
+                        clipboard.setClipEntry(
+                            ClipEntry(ClipData.newPlainText("PocketIDE code", code)),
+                        )
+                    }
+                },
+            ) {
+                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Copy code")
+            }
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 300.dp)
                 .verticalScroll(scrollState),
         ) {
-            Text(
-                text = code,
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontFamily = FontFamily.Monospace,
-                ),
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+            SelectionContainer {
+                Text(
+                    text = code,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
         }
     }
 }
@@ -745,46 +1014,31 @@ private fun AgentStatusBadge(
 }
 
 @Composable
-private fun GeneratingIndicator() {
+private fun InferenceIndicator(label: String, prominent: Boolean) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier
-            .padding(horizontal = 14.dp, vertical = 6.dp),
-    ) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(14.dp),
-            strokeWidth = 2.dp,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Text(
-            text = "Generating...",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
-private fun ThinkingIndicator() {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier
-            .padding(horizontal = 14.dp, vertical = 8.dp)
+            .padding(horizontal = 14.dp, vertical = if (prominent) 8.dp else 6.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .background(
+                if (prominent) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                else Color.Transparent,
+            )
+            .padding(
+                horizontal = if (prominent) 12.dp else 0.dp,
+                vertical = if (prominent) 8.dp else 0.dp,
+            ),
     ) {
         CircularProgressIndicator(
+            modifier = Modifier.size(if (prominent) 18.dp else 14.dp),
             strokeWidth = 2.dp,
             color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(18.dp),
         )
         Text(
-            text = "Thinking...",
+            text = label,
             style = MaterialTheme.typography.labelSmall.copy(
-                fontWeight = FontWeight.Medium,
+                fontWeight = if (prominent) FontWeight.Medium else FontWeight.Normal,
             ),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

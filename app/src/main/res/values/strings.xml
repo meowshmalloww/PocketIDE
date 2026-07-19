@@ -1,3 +1,24 @@
 <resources>
     <string name="app_name">PocketIDE</string>
+    <string name="model_catalog_title">Verified one-tap models</string>
+    <string name="model_catalog_explanation">Downloads continue in the background, are SHA-256 verified, and are selected automatically. Keep at least 1.5 GB free.</string>
+    <string name="model_catalog_qwen_description">Coding-focused GGUF for PocketIDE\'s llama.cpp backend.</string>
+    <string name="model_catalog_llama_description">Arm-optimized ExecuTorch PTE with its required tokenizer.</string>
+    <string name="model_catalog_metadata">%1$s • %2$s</string>
+    <string name="model_catalog_progress">%1$s / %2$s (%3$d%%)</string>
+    <string name="model_catalog_view_source">View source</string>
+    <string name="model_catalog_status_available">Ready to download</string>
+    <string name="model_catalog_status_queued">Queued</string>
+    <string name="model_catalog_status_downloading">Downloading</string>
+    <string name="model_catalog_status_paused">Paused</string>
+    <string name="model_catalog_status_verifying">Verifying SHA-256…</string>
+    <string name="model_catalog_status_installed">Verified and selected</string>
+    <string name="model_catalog_status_failed">Download failed</string>
+    <string name="model_catalog_start_failed">Could not start the download</string>
+    <string name="model_catalog_cancel_failed">Could not cancel the download</string>
+    <string name="action_download">Download</string>
+    <string name="action_retry">Retry</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="benchmark_arm_runtime">Arm runtime evidence</string>
+    <string name="benchmark_resource_plan">Inference resource plan</string>
 </resources>

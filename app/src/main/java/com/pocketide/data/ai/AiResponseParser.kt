@@ -8,6 +8,7 @@ data class ParsedAiResponse(
     val language: Language?,
     val filename: String?,
     val files: List<ParsedAiFile> = emptyList(),
+    val isTruncated: Boolean = false,
 )
 
 data class ParsedAiFile(
@@ -32,6 +33,7 @@ private val UNCLOSED_CODE_BLOCK_REGEX = Regex("""```([A-Za-z0-9+#]*)\s*\n([\s\S]
  *  - No fenced block at all — falls back to raw content if a filename was given
  */
 fun parseAiResponse(rawContent: String): ParsedAiResponse {
+    val isTruncated = rawContent.windowed(3).count { it == "```" } % 2 != 0
     val plan = PLAN_REGEX.find(rawContent)?.groupValues?.get(1)?.trim()?.trim('`', '"', '\'')
     val parsedFiles = parseFiles(rawContent)
     val firstParsedFile = parsedFiles.firstOrNull()
@@ -62,6 +64,7 @@ fun parseAiResponse(rawContent: String): ParsedAiResponse {
         language = firstParsedFile?.language ?: language,
         filename = filename,
         files = parsedFiles,
+        isTruncated = isTruncated,
     )
 }
 

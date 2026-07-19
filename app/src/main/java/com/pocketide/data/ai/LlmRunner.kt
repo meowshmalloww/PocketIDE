@@ -17,6 +17,7 @@ interface LlmRunner {
 
     data class LoadOptions(
         val contextLength: Int = 4096,
+        val batchSize: Int = 512,
         val threadCount: Int = 0,
     )
 
@@ -28,6 +29,8 @@ interface LlmRunner {
         val deterministic: Boolean = false,
         val ignoreEos: Boolean = false,
         val seed: Int = -1,
+        /** Optional new-token cap for runtimes whose sequence API uses a total-length limit. */
+        val maxOutputTokens: Int? = null,
     )
 
     sealed class LoadResult {
@@ -41,7 +44,8 @@ interface LlmRunner {
             val statsJson: String?,
             val generatedTokenCount: Int? = null,
             val promptTokenCount: Int? = null,
-            val actualThreadCount: Int? = null,
+            /** Thread count configured when the native context was loaded, if controlled by PocketIDE. */
+            val configuredThreadCount: Int? = null,
         ) : GenerateResult()
         data class Error(val message: String) : GenerateResult()
     }

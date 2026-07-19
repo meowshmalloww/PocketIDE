@@ -26,6 +26,7 @@ import java.io.ByteArrayOutputStream
 
 private const val INSTRUCTION_LIMIT = 5_000_000
 private const val SHELL_TIMEOUT_MS = 10_000L
+private const val MAX_ERROR_SOURCE_CHARS = 180
 
 /**
  * Executes code on-device where a real, safe interpreter is available.
@@ -130,7 +131,7 @@ class CodeExecutor(
             ExecutionResult(
                 status = ExecutionStatus.FAILED,
                 stdout = console.stdoutText() + stdout,
-                stderr = "${e.message}",
+                stderr = formatJavaScriptSyntaxError(e, code),
                 exitCode = 1,
                 durationMs = SystemClock.elapsedRealtime() - startTime,
                 errorLine = e.lineNumber().takeIf { it > 0 },
@@ -149,6 +150,33 @@ class CodeExecutor(
         } finally {
             try { Context.exit() } catch (e: Exception) { Log.w("CodeExecutor", "Context.exit failed", e) }
         }
+    }
+
+    private fun formatJavaScriptSyntaxError(error: EvaluatorException, source: String): String {
+        val lineNumber = error.lineNumber().takeIf { it > 0 }
+        val columnNumber = error.columnNumber().takeIf { it > 0 }
+        val sourceLines = source.lines()
+        return buildString {
+            appendLine(error.message ?: error.javaClass.simpleName)
+            if (lineNumber != null) {
+                append("Location: main.js:$lineNumber")
+                if (columnNumber != null) append(":$columnNumber")
+                appendLine()
+                sourceLines.getOrNull(lineNumber - 1)?.let { line ->
+                    appendLine("Source: ${line.take(MAX_ERROR_SOURCE_CHARS)}")
+                }
+            }
+            val message = error.message.orEmpty()
+            if (message.contains("unterminated string", ignoreCase = true) ||
+                message.contains("unescaped line break", ignoreCase = true)
+            ) {
+                append(
+                    "Hint: a quoted string contains a real newline, is missing its closing quote, " +
+                        "or the generated file ended early. Escape the newline as \\n and close the quote. " +
+                        "PocketIDE does not impose a source line-count limit.",
+                )
+            }
+        }.trimEnd()
     }
 
     private fun executeLua(

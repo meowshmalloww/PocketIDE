@@ -2,7 +2,9 @@ package com.pocketide.data.ai
 
 import com.pocketide.data.model.Language
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AiResponseParserTest {
@@ -23,6 +25,7 @@ class AiResponseParserTest {
         assertEquals("main.py", parsed.filename)
         assertEquals("print(\"Hello, World!\")", parsed.code)
         assertEquals(Language.PYTHON, parsed.language)
+        assertFalse(parsed.isTruncated)
     }
 
     @Test
@@ -242,5 +245,20 @@ class AiResponseParserTest {
         assertEquals("calculator.py", parsed.files[0].filename)
         assertEquals("main.py", parsed.files[1].filename)
         assertEquals(Language.PYTHON, parsed.files[1].language)
+    }
+
+    @Test
+    fun `marks an unclosed model code fence as truncated`() {
+        val parsed = parseAiResponse(
+            """
+            PLAN: Build a long app
+            FILE: main.js
+            ```javascript
+            var message = "generation stopped here
+            """.trimIndent(),
+        )
+
+        assertTrue(parsed.isTruncated)
+        assertEquals("main.js", parsed.filename)
     }
 }

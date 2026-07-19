@@ -36,7 +36,10 @@ class PocketIDEUiTest {
 
         composeRule.onNodeWithContentDescription("Benchmark").performClick()
         composeRule.onNodeWithText("On-device benchmark").assertIsDisplayed()
-        composeRule.onNodeWithText("Run benchmark").assertIsDisplayed()
+        composeRule.onNodeWithText("● Quick").assertIsDisplayed()
+        composeRule.onNodeWithText("Deep").assertIsDisplayed()
+        composeRule.onNodeWithText("Sustain").assertIsDisplayed()
+        composeRule.onNodeWithText("Run Quick").assertIsDisplayed()
     }
 
     @Test
@@ -44,7 +47,7 @@ class PocketIDEUiTest {
         composeRule.onNodeWithContentDescription("Settings").performClick()
         composeRule.onNodeWithText("Settings").assertIsDisplayed()
         composeRule.onNodeWithText("Add Model").performScrollTo().performClick()
-        composeRule.onNodeWithText("Model file (.gguf or .pte)").assertIsDisplayed()
+        composeRule.onNodeWithText("Model file (.gguf or .pte)").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Tap to choose a file").assertIsDisplayed()
     }
 }

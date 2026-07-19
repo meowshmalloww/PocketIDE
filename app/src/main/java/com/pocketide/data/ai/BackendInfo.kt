@@ -28,6 +28,11 @@ object BackendInfo {
 
     private const val TAG = "BackendInfo"
 
+    data class CpuCoreFrequency(
+        val core: Int,
+        val maximumKHz: Long,
+    )
+
     /** Arm CPU features detected from /proc/cpuinfo. */
     data class CpuFeatures(
         val isArm64: Boolean,
@@ -43,11 +48,11 @@ object BackendInfo {
         val hasCrc32: Boolean,
         val coreCount: Int,
     ) {
-        /** KleidiAI INT4 kernels require at minimum NEON + i8mm support. */
+        /** Coarse ISA precondition only; this does not prove that a runtime invokes KleidiAI. */
         val kleidiAiInt4Capable: Boolean
             get() = isArm64 && hasNeon && hasI8mm
 
-        /** KleidiAI INT8 kernels benefit from dotprod (ARMv8.4+). */
+        /** Coarse ISA precondition only; model export and runtime backend still decide dispatch. */
         val kleidiAiInt8Capable: Boolean
             get() = isArm64 && hasNeon && hasI8mm && hasDotprod
 
@@ -58,6 +63,30 @@ object BackendInfo {
 
     /** Cached CPU features — read once, reused. */
     val features: CpuFeatures by lazy { detectCpuFeatures() }
+
+    /** Stable maximum-frequency topology exposed by Linux sysfs, when readable. */
+    val coreFrequencies: List<CpuCoreFrequency> by lazy {
+        (0 until features.coreCount).mapNotNull { core ->
+            val base = java.io.File("/sys/devices/system/cpu/cpu$core/cpufreq")
+            val maximum = readLong(java.io.File(base, "cpuinfo_max_freq"))
+                ?: readLong(java.io.File(base, "scaling_max_freq"))
+            maximum?.takeIf { it > 0L }?.let { CpuCoreFrequency(core, it) }
+        }
+    }
+
+    val frequencyClusters: List<Pair<Long, Int>> by lazy {
+        coreFrequencies
+            .groupingBy { it.maximumKHz }
+            .eachCount()
+            .toList()
+            .sortedBy { it.first }
+    }
+
+    val socManufacturer: String?
+        get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MANUFACTURER else null
+
+    val socModel: String?
+        get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else null
 
     /**
      * Returns the optimal thread count for inference on this device.
@@ -112,14 +141,23 @@ object BackendInfo {
             appendLine("Backends: llama.cpp (GGUF) or ExecuTorch + XNNPACK (PTE)")
             appendLine("Architecture: ${if (features.isArm64) "arm64-v8a" else Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"}")
             appendLine("Cores: ${features.coreCount} (suggested starting point: $optimalThreadCount threads)")
+            socModel?.takeIf { it.isNotBlank() }?.let { appendLine("SoC: $it") }
+            if (frequencyClusters.isNotEmpty()) {
+                appendLine(
+                    "CPU max-frequency clusters: " + frequencyClusters.joinToString { (khz, count) ->
+                        "${count}x${"%.0f".format(khz / 1000.0)}MHz"
+                    },
+                )
+            }
             appendLine("NEON: ${features.hasNeon}")
             appendLine("i8mm: ${features.hasI8mm}")
             appendLine("Dotprod: ${features.hasDotprod}")
             appendLine("SVE2: ${features.hasSve2}")
             appendLine("SME2: ${features.hasSme2}")
             appendLine("llama.cpp native library: $llamaCppNativeLibrary")
-            appendLine("KleidiAI INT4: ${if (features.kleidiAiInt4Capable) "capable" else "not supported"}")
-            appendLine("KleidiAI INT8: ${if (features.kleidiAiInt8Capable) "capable" else "not supported"}")
+            appendLine("KleidiAI INT4 ISA precondition: ${if (features.kleidiAiInt4Capable) "present" else "absent"}")
+            appendLine("KleidiAI INT8 ISA precondition: ${if (features.kleidiAiInt8Capable) "present" else "absent"}")
+            appendLine("KleidiAI kernel invocation: not exposed or verified by the current runtime")
             appendLine("SME2: ${if (features.sme2Capable) "capable" else "not supported"}")
         }.trim()
     }
@@ -164,4 +202,8 @@ object BackendInfo {
             coreCount = coreCount,
         )
     }
+
+    private fun readLong(file: java.io.File): Long? = runCatching {
+        file.readText().trim().toLong()
+    }.getOrNull()
 }

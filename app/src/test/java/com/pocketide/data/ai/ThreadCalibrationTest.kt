@@ -30,13 +30,13 @@ class ThreadCalibrationTest {
     }
 
     @Test
-    fun `within one percent prefers lower process memory`() {
+    fun `within one percent prefers fewer configured threads despite noisy pss`() {
         val selected = ThreadProfileSelector.select(
             listOf(
-                sample(1, 8.40f, 1_700),
-                sample(1, 8.42f, 1_710),
-                sample(2, 8.45f, 1_950),
-                sample(2, 8.46f, 1_960),
+                sample(1, 8.40f, 2_100),
+                sample(1, 8.42f, 2_110),
+                sample(2, 8.45f, 1_500),
+                sample(2, 8.46f, 1_510),
             ),
         )
 
@@ -60,6 +60,8 @@ class ThreadCalibrationTest {
             medianTokensPerSecond = 8.45f,
             averageTtftMs = 120,
             averagePeakProcessPssBytes = 1_700L * 1024L * 1024L,
+            comparisonThreadCount = 4,
+            comparisonMedianTokensPerSecond = 7.9f,
             measuredAtMs = 1234,
         )
 

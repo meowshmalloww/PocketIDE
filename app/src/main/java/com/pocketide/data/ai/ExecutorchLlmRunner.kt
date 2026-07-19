@@ -34,10 +34,10 @@ class ExecutorchLlmRunner(
     private val mutex = Mutex()
 
     // Guarded by [mutex] after construction.
-    private var module: LlmModule? = null
-    private var loadedModelPath: String? = null
-    private var loadedTokenizerPath: String? = null
-    private var loadedTemperature: Float = Float.NaN
+    @Volatile private var module: LlmModule? = null
+    @Volatile private var loadedModelPath: String? = null
+    @Volatile private var loadedTokenizerPath: String? = null
+    @Volatile private var loadedTemperature: Float = Float.NaN
 
     /**
      * Ensures a module matching [modelPath] / [tokenizerPath] / [temperature]
@@ -70,9 +70,7 @@ class ExecutorchLlmRunner(
                 val newModule = LlmModule(modelPath, tokenizerPath, temperature)
                 val loadCode = newModule.load()
                 if (loadCode != 0) {
-                    newModule.runCatching { resetContext() }
-                    // LlmModule has no explicit close() in 1.0.0; drop the ref
-                    // and let GC + native finalizer reclaim.
+                    newModule.runCatching { resetNative() }
                     return@withLock LlmRunner.LoadResult.Error(
                         "LlmModule.load() failed with code $loadCode",
                     )
@@ -90,7 +88,7 @@ class ExecutorchLlmRunner(
     }
 
     /**
-     * Runs generation for [prompt] up to [seqLen] tokens. Streams tokens
+     * Runs generation for [prompt] with [seqLen] as the total sequence-length cap. Streams tokens
      * through [sink] as they are produced, and returns the concatenated text
      * plus the runner's stats JSON on completion.
      */
@@ -107,13 +105,21 @@ class ExecutorchLlmRunner(
             val builder = StringBuilder()
             val statsHolder = arrayOfNulls<String>(1)
             val errorHolder = arrayOfNulls<String>(1)
+            val outputLimiter = OutputTokenLimiter(options.maxOutputTokens)
+            var stoppedAtOutputLimit = false
 
             try {
                 suspendCancellableCoroutine<Unit> { cont ->
                     val callback = object : LlmCallback {
                         override fun onResult(token: String) {
+                            val decision = outputLimiter.accept()
+                            if (decision == OutputTokenLimiter.Decision.DROP) return
                             builder.append(token)
                             sink.onToken(token)
+                            if (decision == OutputTokenLimiter.Decision.EMIT_AND_STOP) {
+                                stoppedAtOutputLimit = true
+                                runCatching { currentModule.stop() }
+                            }
                         }
 
                         override fun onStats(stats: String) {
@@ -124,7 +130,10 @@ class ExecutorchLlmRunner(
                         runCatching { currentModule.stop() }
                     }
                     try {
-                        currentModule.generate(prompt, seqLen, callback, false)
+                        val status = currentModule.generate(prompt, seqLen, callback, false)
+                        if (status != 0 && !stoppedAtOutputLimit) {
+                            errorHolder[0] = "ExecuTorch generation failed with code $status"
+                        }
                         if (cont.isActive) cont.resume(Unit)
                     } catch (t: Throwable) {
                         errorHolder[0] = t.message ?: t.javaClass.simpleName
@@ -139,7 +148,18 @@ class ExecutorchLlmRunner(
             if (err != null) {
                 LlmRunner.GenerateResult.Error(err)
             } else {
-                LlmRunner.GenerateResult.Success(builder.toString(), statsHolder[0])
+                val stats = ExecutorchGenerationStats.parse(statsHolder[0])
+                LlmRunner.GenerateResult.Success(
+                    text = builder.toString(),
+                    statsJson = statsHolder[0],
+                    generatedTokenCount = if (options.maxOutputTokens != null) {
+                        outputLimiter.emittedTokens
+                    } else {
+                        stats?.generatedTokens ?: outputLimiter.emittedTokens
+                    },
+                    promptTokenCount = stats?.promptTokens,
+                    configuredThreadCount = null,
+                )
             }
         }
     }
@@ -148,6 +168,9 @@ class ExecutorchLlmRunner(
     override fun stop() {
         module?.runCatching { stop() }
     }
+
+    fun isLoaded(modelPath: String, tokenizerPath: String, temperature: Float): Boolean =
+        moduleMatches(modelPath, tokenizerPath, temperature)
 
     /** Clears the KV cache and resets generation state. */
     override suspend fun resetContext() {
@@ -177,6 +200,8 @@ class ExecutorchLlmRunner(
     private fun releaseLocked() {
         val current = module ?: return
         runCatching { current.stop() }
+        runCatching { current.resetNative() }
+            .onFailure { Log.w(TAG, "ExecuTorch native release failed", it) }
         module = null
         loadedModelPath = null
         loadedTokenizerPath = null

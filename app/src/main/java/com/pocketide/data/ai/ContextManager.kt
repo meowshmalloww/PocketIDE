@@ -27,6 +27,9 @@ object ContextManager {
     private const val CHARS_PER_TOKEN = 4
     private const val MIN_HISTORY_TOKENS = 512
     private const val MIN_CODE_CONTEXT_TOKENS = 256
+    private const val FORMATTER_HEADROOM_TOKENS = 64
+    private const val TRUNCATION_SUFFIX = "\n... [truncated to fit context window]"
+    private const val CODE_CONTEXT_PREFIX = "\n\nCURRENT PROJECT FILES:\n"
 
     /**
      * Rough token estimate. Not exact (no tokenizer loaded), but sufficient
@@ -64,10 +67,24 @@ object ContextManager {
         val responseBudget = (contextWindowSize / 4).coerceIn(256, 2048)
 
         // Available budget for system + code context + history + user
-        val available = contextWindowSize - responseBudget
+        val available = (contextWindowSize - responseBudget - FORMATTER_HEADROOM_TOKENS)
+            .coerceAtLeast(0)
 
-        // User message is always included in full
-        val remainingAfterUser = available - userTokens
+        // Extremely long user messages must not produce a negative truncation length. Preserve
+        // room for both the runtime instructions and the request instead of letting formatting
+        // overflow the native context before generation begins.
+        val safeUserMessage = if (userTokens >= available) {
+            truncateText(
+                userMessage,
+                (available / 3).coerceAtLeast(0) * CHARS_PER_TOKEN,
+            )
+        } else {
+            userMessage
+        }
+        val safeUserTokens = estimateTokens(safeUserMessage)
+
+        // The user message is kept in full unless it alone would overflow the safe input budget.
+        val remainingAfterUser = available - safeUserTokens
 
         // System prompt is always included in full
         val remainingAfterSystem = remainingAfterUser - systemTokens
@@ -75,18 +92,30 @@ object ContextManager {
         if (remainingAfterSystem <= 0) {
             // System prompt + user message alone exceed the window.
             // Return just the user message with a truncated system prompt.
-            val truncatedSystem = truncateText(systemPrompt, (available - userTokens) * CHARS_PER_TOKEN)
+            val truncatedSystem = truncateText(
+                systemPrompt,
+                (available - safeUserTokens).coerceAtLeast(0) * CHARS_PER_TOKEN,
+            )
             return ManagedContext(
                 systemPrompt = truncatedSystem,
                 history = emptyList(),
-                userMessage = userMessage,
+                userMessage = safeUserMessage,
                 codeContext = "",
             )
         }
 
         // Allocate remaining budget: 40% for code context, rest for history
+        val codePrefixTokens = if (enableCodeContext && files.isNotEmpty()) {
+            estimateTokens(CODE_CONTEXT_PREFIX)
+        } else {
+            0
+        }
+        val remainingForCodeAndHistory = (remainingAfterSystem - codePrefixTokens)
+            .coerceAtLeast(0)
         val codeContextBudget = if (enableCodeContext && files.isNotEmpty()) {
-            (remainingAfterSystem * 0.4).toInt().coerceAtLeast(MIN_CODE_CONTEXT_TOKENS)
+            (remainingForCodeAndHistory * 0.4).toInt()
+                .coerceAtLeast(MIN_CODE_CONTEXT_TOKENS)
+                .coerceAtMost(remainingForCodeAndHistory)
         } else {
             0
         }
@@ -99,7 +128,11 @@ object ContextManager {
         }
 
         // Adjust history budget after code context
-        val codeContextTokens = estimateTokens(codeContext)
+        val codeContextTokens = if (codeContext.isNotBlank()) {
+            codePrefixTokens + estimateTokens(codeContext)
+        } else {
+            0
+        }
         val adjustedHistoryBudget = (remainingAfterSystem - codeContextTokens).coerceAtLeast(0)
 
         // Trim history to fit (with or without summarization)
@@ -107,7 +140,7 @@ object ContextManager {
 
         // Augment system prompt with code context
         val augmentedSystem = if (codeContext.isNotBlank()) {
-            "$systemPrompt\n\nCURRENT PROJECT FILES:\n$codeContext"
+            "$systemPrompt$CODE_CONTEXT_PREFIX$codeContext"
         } else {
             systemPrompt
         }
@@ -115,7 +148,7 @@ object ContextManager {
         return ManagedContext(
             systemPrompt = augmentedSystem,
             history = trimmedHistory,
-            userMessage = userMessage,
+            userMessage = safeUserMessage,
             codeContext = codeContext,
         )
     }
@@ -151,7 +184,6 @@ object ContextManager {
                 if (remaining > 0) {
                     sb.append(header)
                     sb.append(truncateText(activeFile.content, remaining * CHARS_PER_TOKEN))
-                    sb.append("\n... [truncated]\n")
                     usedTokens = tokenBudget
                 }
             }
@@ -222,11 +254,14 @@ object ContextManager {
         val droppedCount = history.size - kept.size
         if (droppedCount > 0 && kept.isNotEmpty() && enableSummary) {
             val summary = buildHistorySummary(history, kept.size)
-            val summaryTurn = ChatTurn(
-                role = "system",
-                content = summary,
-            )
-            return listOf(summaryTurn) + kept
+            val summaryTokens = estimateTokens(summary) + 4
+            if (usedTokens + summaryTokens <= tokenBudget) {
+                val summaryTurn = ChatTurn(
+                    role = "system",
+                    content = summary,
+                )
+                return listOf(summaryTurn) + kept
+            }
         }
 
         return kept
@@ -265,8 +300,10 @@ object ContextManager {
     }
 
     private fun truncateText(text: String, maxChars: Int): String {
+        if (maxChars <= 0) return ""
         if (text.length <= maxChars) return text
-        return text.take(maxChars) + "\n... [truncated to fit context window]"
+        if (maxChars <= TRUNCATION_SUFFIX.length) return text.take(maxChars)
+        return text.take(maxChars - TRUNCATION_SUFFIX.length) + TRUNCATION_SUFFIX
     }
 }
 

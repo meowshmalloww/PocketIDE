@@ -118,8 +118,8 @@ object AdaptiveInferenceTuner {
             } else {
                 threads = optimalThreads
             }
-            // On Arm big.LITTLE: if KleidiAI i8mm capable, we can use fewer
-            // threads because the SIMD kernels are more efficient
+            // On Arm big.LITTLE, i8mm is a useful starting-profile hint. This
+            // does not claim KleidiAI dispatch; measured calibration overrides it.
             if (cpuFeatures.kleidiAiInt4Capable && threads > 4) {
                 threads = (threads * 0.85f).toInt().coerceAtLeast(2)
             }
@@ -240,5 +240,5 @@ data class InferenceTuning(
             "battery=$batteryLevel% (${if (isCharging) "charging" else "discharging"}), " +
             "temp=${batteryTempCelsius}C, memPressure=${(memoryPressureRatio * 100).toInt()}%, " +
             "thermalStatus=${thermalStatus ?: "unavailable"}, cores=$cpuCores, i8mm=$hasI8mm, dotprod=$hasDotprod, " +
-            "kleidiAI_int4=$kleidiAiInt4Capable, sve2=$hasSve2"
+            "kleidiAI_int4_isa_precondition=$kleidiAiInt4Capable, sve2=$hasSve2"
 }

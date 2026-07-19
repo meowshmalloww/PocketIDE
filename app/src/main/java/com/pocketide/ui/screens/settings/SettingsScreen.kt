@@ -176,6 +176,7 @@ fun SettingsScreen(
                         isDarkMode = isDarkMode,
                         onPersist = ::persistAiConfig,
                         onThemeChange = { themeViewModel.setDarkMode(it) },
+                        onCatalogModelActivated = { aiConfig = aiConfigRepository.load() },
                         selectedSection = selectedSection,
                     )
                 }
@@ -196,6 +197,7 @@ fun SettingsScreen(
                     isDarkMode = isDarkMode,
                     onPersist = ::persistAiConfig,
                     onThemeChange = { themeViewModel.setDarkMode(it) },
+                    onCatalogModelActivated = { aiConfig = aiConfigRepository.load() },
                     selectedSection = -1,
                 )
             }
@@ -209,6 +211,7 @@ private fun SettingsContent(
     isDarkMode: Boolean,
     onPersist: ((AiConfig) -> AiConfig) -> Unit,
     onThemeChange: (Boolean) -> Unit,
+    onCatalogModelActivated: () -> Unit,
     selectedSection: Int = -1,
 ) {
     // Section indices match the sidebar list:
@@ -238,6 +241,7 @@ private fun SettingsContent(
             activeModelIndex = aiConfig.activeModelIndex,
             onSelectModel = { index -> onPersist { it.copy(activeModelIndex = index) } },
             onAddModel = { entry -> onPersist { it.copy(models = it.models + entry) } },
+            onCatalogModelActivated = onCatalogModelActivated,
             onRemoveModel = { index -> onPersist {
                 val newModels = it.models.toMutableList()
                 val wasActive = it.activeModelIndex == index
@@ -612,6 +616,7 @@ private fun ModelManagerSection(
     activeModelIndex: Int,
     onSelectModel: (Int) -> Unit,
     onAddModel: (ModelEntry) -> Unit,
+    onCatalogModelActivated: () -> Unit,
     onRemoveModel: (Int) -> Unit,
 ) {
     val context = LocalContext.current
@@ -667,6 +672,12 @@ private fun ModelManagerSection(
             }
         }
     }
+
+    CatalogModelDownloads(onModelActivated = onCatalogModelActivated)
+    HorizontalDivider(
+        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+        modifier = Modifier.padding(vertical = 8.dp),
+    )
 
     // List existing models
     if (models.isNotEmpty()) {

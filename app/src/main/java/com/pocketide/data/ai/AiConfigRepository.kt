@@ -61,6 +61,26 @@ class AiConfigRepository(context: Context) {
         }
     }
 
+    /** Adds or updates a verified local model and makes it the active model. */
+    @Synchronized
+    fun upsertAndActivate(entry: ModelEntry, quantization: Quantization) {
+        val current = load()
+        val existingIndex = current.models.indexOfFirst { model ->
+            model.modelPath == entry.modelPath
+        }
+        val updatedModels = current.models.toMutableList().apply {
+            if (existingIndex >= 0) this[existingIndex] = entry else add(entry)
+        }
+        val activeIndex = if (existingIndex >= 0) existingIndex else updatedModels.lastIndex
+        save(
+            current.copy(
+                models = updatedModels,
+                activeModelIndex = activeIndex,
+                quantization = quantization,
+            ),
+        )
+    }
+
     private fun serializeModels(models: List<ModelEntry>): String {
         return models.joinToString("\n") { entry ->
             "${entry.name}\t${entry.modelPath}\t${entry.tokenizerPath}\t${entry.promptTemplate.name}"

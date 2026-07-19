@@ -18,12 +18,19 @@ class LlamaCppRunner(
     private val dispatcher: CoroutineDispatcher = RunnerDispatcher,
 ) : LlmRunner {
 
+    data class LoadedProfile(
+        val contextLength: Int,
+        val batchSize: Int,
+        val threadCount: Int,
+    )
+
     private val mutex = Mutex()
-    private var llamaContext: LlamaContext? = null
-    private var loadedModelPath: String? = null
-    private var loadedTemperature = Float.NaN
-    private var loadedContextLength = 0
-    private var loadedThreadCount = 0
+    @Volatile private var llamaContext: LlamaContext? = null
+    @Volatile private var loadedModelPath: String? = null
+    @Volatile private var loadedTemperature = Float.NaN
+    @Volatile private var loadedContextLength = 0
+    @Volatile private var loadedBatchSize = 0
+    @Volatile private var loadedThreadCount = 0
 
     override suspend fun ensureLoaded(
         modelPath: String,
@@ -33,11 +40,12 @@ class LlamaCppRunner(
     ): LlmRunner.LoadResult = withContext(dispatcher) {
         mutex.withLock {
             val contextLength = options.contextLength.coerceAtLeast(MIN_CONTEXT_LENGTH)
+            val batchSize = options.batchSize.coerceIn(1, contextLength)
             val threads = options.threadCount
                 .takeIf { it > 0 }
                 ?.coerceAtMost(Runtime.getRuntime().availableProcessors())
                 ?: DEFAULT_THREADS.coerceAtMost(Runtime.getRuntime().availableProcessors())
-            if (modelMatches(modelPath, temperature, contextLength, threads)) {
+            if (modelMatches(modelPath, temperature, contextLength, batchSize, threads)) {
                 return@withLock LlmRunner.LoadResult.Success
             }
 
@@ -59,7 +67,7 @@ class LlamaCppRunner(
                         "model_fd" to fd,
                         "embedding" to false,
                         "n_ctx" to contextLength,
-                        "n_batch" to contextLength.coerceAtMost(512),
+                        "n_batch" to batchSize,
                         "n_threads" to threads,
                         "n_gpu_layers" to 0,
                         "use_mlock" to false,
@@ -71,8 +79,13 @@ class LlamaCppRunner(
                 loadedModelPath = modelPath
                 loadedTemperature = temperature
                 loadedContextLength = contextLength
+                loadedBatchSize = batchSize
                 loadedThreadCount = threads
-                Log.i(TAG, "Loaded ${modelFile.name}: ctx=$contextLength, actualThreads=$threads, mmap=true")
+                Log.i(
+                    TAG,
+                    "Loaded ${modelFile.name}: ctx=$contextLength, batch=$batchSize, " +
+                        "loadConfiguredThreads=$threads, mmap=true",
+                )
                 LlmRunner.LoadResult.Success
             } catch (error: Throwable) {
                 Log.e(TAG, "Failed to load GGUF model", error)
@@ -119,7 +132,7 @@ class LlamaCppRunner(
                     statsJson = JSONObject(result).toString(),
                     generatedTokenCount = generated,
                     promptTokenCount = promptTokens,
-                    actualThreadCount = loadedThreadCount,
+                    configuredThreadCount = loadedThreadCount,
                 )
             } catch (error: Throwable) {
                 Log.e(TAG, "GGUF generation failed", error)
@@ -143,16 +156,54 @@ class LlamaCppRunner(
 
     fun modelDetails(): Map<String, Any> = llamaContext?.modelDetails.orEmpty()
 
-    fun actualThreadCount(): Int = loadedThreadCount
+    fun configuredThreadCount(): Int = loadedThreadCount
+
+    fun isLoaded(
+        modelPath: String,
+        temperature: Float,
+        contextLength: Int,
+        batchSize: Int,
+        threadCount: Int,
+    ): Boolean = modelMatches(modelPath, temperature, contextLength, batchSize, threadCount)
+
+    /** Returns the exact live native profile without deriving a new profile from current free RAM. */
+    fun loadedProfile(modelPath: String, temperature: Float): LoadedProfile? {
+        if (llamaContext == null || loadedModelPath != modelPath || loadedTemperature != temperature) {
+            return null
+        }
+        return LoadedProfile(
+            contextLength = loadedContextLength,
+            batchSize = loadedBatchSize,
+            threadCount = loadedThreadCount,
+        ).takeIf { it.contextLength > 0 && it.batchSize > 0 && it.threadCount > 0 }
+    }
 
     fun tokenize(text: String): Int? = runCatching { llamaContext?.tokenize(text)?.size }.getOrNull()
 
-    fun nativeBench(promptTokens: Int = 128, generatedTokens: Int = 32, repetitions: Int = 3): String? =
-        runCatching { llamaContext?.bench(promptTokens, generatedTokens, 1, repetitions) }.getOrNull()
+    suspend fun nativeBench(
+        promptTokens: Int = 128,
+        generatedTokens: Int = 32,
+        repetitions: Int = 3,
+    ): String? = withContext(dispatcher) {
+        mutex.withLock {
+            runCatching {
+                llamaContext?.bench(promptTokens, generatedTokens, 1, repetitions)
+            }.onFailure { error ->
+                Log.e(TAG, "Native llama.cpp benchmark failed", error)
+            }.getOrNull()
+        }
+    }
 
-    private fun modelMatches(path: String, temperature: Float, contextLength: Int, threads: Int): Boolean =
+    private fun modelMatches(
+        path: String,
+        temperature: Float,
+        contextLength: Int,
+        batchSize: Int,
+        threadCount: Int,
+    ): Boolean =
         llamaContext != null && loadedModelPath == path && loadedTemperature == temperature &&
-            loadedContextLength == contextLength && loadedThreadCount == threads
+            loadedContextLength == contextLength && loadedBatchSize == batchSize &&
+            loadedThreadCount == threadCount
 
     private fun releaseLocked() {
         runCatching { llamaContext?.stopCompletion() }
@@ -161,6 +212,7 @@ class LlamaCppRunner(
         loadedModelPath = null
         loadedTemperature = Float.NaN
         loadedContextLength = 0
+        loadedBatchSize = 0
         loadedThreadCount = 0
     }
 

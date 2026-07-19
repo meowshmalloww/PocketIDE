@@ -4,6 +4,12 @@ plugins {
     alias(libs.plugins.chaquopy)
 }
 
+val pocketIdeAbi = providers.gradleProperty("pocketide.abi").orNull
+val supportedPocketIdeAbis = setOf("arm64-v8a", "x86_64")
+require(pocketIdeAbi == null || pocketIdeAbi in supportedPocketIdeAbis) {
+    "pocketide.abi must be one of: ${supportedPocketIdeAbis.joinToString()}"
+}
+
 android {
     namespace = "com.pocketide"
     compileSdk {
@@ -23,8 +29,9 @@ android {
 
         ndk {
             // ExecuTorch AAR ships arm64-v8a and x86_64. Hackathon target is
-            // Arm-only, but keep x86_64 for emulator testing on dev machines.
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            // Arm-only, but keep x86_64 in the default build for emulator tests.
+            // Use --project-prop pocketide.abi=arm64-v8a for the smaller phone artifact.
+            abiFilters += pocketIdeAbi?.let(::listOf) ?: supportedPocketIdeAbis
         }
     }
 
@@ -88,10 +95,13 @@ dependencies {
     // Java execution engine (BeanShell interpreter)
     implementation(libs.beanshell)
 
-    // On-device LLM inference — ExecuTorch (.pte models, NPU acceleration)
+    // On-device LLM inference - ExecuTorch (.pte models)
+    // Acceleration depends on the backend embedded in the PTE export and the
+    // backend libraries in the runtime AAR. This dependency alone is not proof
+    // of Qualcomm QNN/NPU execution.
     implementation(libs.executorch.android)
 
-    // On-device LLM inference — llama.cpp (.gguf models, broad model ecosystem)
+    // On-device LLM inference - llama.cpp (.gguf models, broad model ecosystem)
     implementation(libs.llamacpp.kotlin)
 
     // Embedded HTTP server for localhost web testing

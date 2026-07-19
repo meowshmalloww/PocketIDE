@@ -24,6 +24,7 @@ object ModelSpec {
         val headDim: Int,
         val maxContextLength: Int,
         val displayName: String,
+        val source: String = "filename or file-size estimate",
     ) {
         val paramCountMillion: Int get() = (paramCountBillion * 1000).toInt()
     }
@@ -40,6 +41,22 @@ object ModelSpec {
 
         // Try to parse parameter count from filename
         val paramCount = parseParamCount(fileName)
+
+        if (fileName.endsWith(".gguf")) {
+            GgufMetadataReader.read(File(modelPath))?.let { metadata ->
+                return Architecture(
+                    paramCountBillion = parseParamCount(metadata.sizeLabel.orEmpty()) ?: paramCount ?: 0f,
+                    numLayers = metadata.blockCount,
+                    hiddenDim = metadata.embeddingLength,
+                    numKvHeads = metadata.attentionKvHeadCount,
+                    headDim = metadata.attentionKeyLength,
+                    maxContextLength = metadata.contextLength,
+                    displayName = metadata.name?.takeIf { it.isNotBlank() }
+                        ?: metadata.architecture,
+                    source = "GGUF metadata",
+                )
+            }
+        }
 
         // Match to known architecture
         return matchArchitecture(paramCount, modelPath)
@@ -85,6 +102,7 @@ object ModelSpec {
                     headDim = closest.headDim,
                     maxContextLength = closest.maxCtx,
                     displayName = closest.name,
+                    source = "filename architecture table",
                 )
             }
         }
@@ -99,11 +117,11 @@ object ModelSpec {
         // Q4_0 quantization: ~0.6 bytes per parameter
         val estimatedParams = fileSizeMb / 0.6f / 1000f
         return when {
-            estimatedParams <= 0.2f -> Architecture(0.135f, 30, 576, 4, 64, 2048, "SmolLM2-135M (estimated)")
-            estimatedParams <= 0.6f -> Architecture(0.5f, 24, 896, 2, 64, 32768, "Qwen2.5-0.5B (estimated)")
-            estimatedParams <= 1.2f -> Architecture(1.5f, 28, 1536, 2, 128, 32768, "Qwen2.5-1.5B (estimated)")
-            estimatedParams <= 2.5f -> Architecture(3.0f, 36, 2048, 4, 64, 32768, "Qwen2.5-3B (estimated)")
-            else -> Architecture(7.0f, 28, 3584, 4, 128, 32768, "Qwen2.5-7B (estimated)")
+            estimatedParams <= 0.2f -> Architecture(0.135f, 30, 576, 4, 64, 2048, "SmolLM2-135M (estimated)", "file-size estimate")
+            estimatedParams <= 0.6f -> Architecture(0.5f, 24, 896, 2, 64, 32768, "Qwen2.5-0.5B (estimated)", "file-size estimate")
+            estimatedParams <= 1.2f -> Architecture(1.5f, 28, 1536, 2, 128, 32768, "Qwen2.5-1.5B (estimated)", "file-size estimate")
+            estimatedParams <= 2.5f -> Architecture(3.0f, 36, 2048, 4, 64, 32768, "Qwen2.5-3B (estimated)", "file-size estimate")
+            else -> Architecture(7.0f, 28, 3584, 4, 128, 32768, "Qwen2.5-7B (estimated)", "file-size estimate")
         }
     }
 

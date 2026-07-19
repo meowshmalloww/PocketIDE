@@ -2,6 +2,7 @@ package com.pocketide.ui.screens.editor
 
 import android.app.Application
 import android.content.Intent
+import android.util.Log
 import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -9,12 +10,20 @@ import com.pocketide.data.ai.AiConfigRepository
 import com.pocketide.data.ai.AiResult
 import com.pocketide.data.ai.AiService
 import com.pocketide.data.ai.BackendInfo
+import com.pocketide.data.ai.BenchmarkDashboard
+import com.pocketide.data.ai.BenchmarkDepth
+import com.pocketide.data.ai.BenchmarkPowerSampler
+import com.pocketide.data.ai.BenchmarkProtocol
 import com.pocketide.data.ai.BenchmarkRunOptions
 import com.pocketide.data.ai.ChatTurn
 import com.pocketide.data.ai.ContextManager
 import com.pocketide.data.ai.ExecutorchLlmRunner
+import com.pocketide.data.ai.InferencePhase
+import com.pocketide.data.ai.InferenceResourcePlan
 import com.pocketide.data.ai.LlamaCppRunner
 import com.pocketide.data.ai.ModelFormat
+import com.pocketide.data.ai.PreviousProcessExit
+import com.pocketide.data.ai.ProcessExitDiagnostics
 import com.pocketide.data.ai.ThreadCalibrationRepository
 import com.pocketide.data.ai.ThreadProfileSample
 import com.pocketide.data.ai.ThreadProfileSelector
@@ -42,7 +51,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import java.util.UUID
@@ -88,13 +100,16 @@ data class EditorUiState(
     val benchmarkRunning: Boolean = false,
     val benchmarkCompletedRuns: Int = 0,
     val benchmarkTotalRuns: Int = 0,
-    val benchmarkSummary: String? = null,
+    val benchmarkPhase: String? = null,
+    val benchmarkSummary: BenchmarkDashboard? = null,
     val benchmarkError: String? = null,
     val chatSessions: List<ChatSessionSummary> = emptyList(),
     val activeChatSessionId: String = UUID.randomUUID().toString(),
     val previewUrl: String? = null,
     val waitingForInput: Boolean = false,
     val inputPrompt: String = "",
+    val inferencePhase: InferencePhase = InferencePhase.IDLE,
+    val previousProcessExit: PreviousProcessExit? = null,
 )
 
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
@@ -105,16 +120,24 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private val aiConfigRepository = AiConfigRepository(application)
     private val threadCalibrationRepository = ThreadCalibrationRepository(application)
     private val chatHistoryRepository = ChatHistoryRepository(application)
+    private val processExitDiagnostics = ProcessExitDiagnostics(application)
+    private val benchmarkPowerSampler = BenchmarkPowerSampler(application)
+    private val recoveredProcessExit = processExitDiagnostics.consumeLatestAbnormal()
     private val executorchRunner = ExecutorchLlmRunner()
     private val llamaCppRunner = LlamaCppRunner(application)
-    private val _state = MutableStateFlow(EditorUiState())
+    private val _state = MutableStateFlow(EditorUiState(previousProcessExit = recoveredProcessExit))
     val state: StateFlow<EditorUiState> = _state.asStateFlow()
     private var cachedService: AiService? = null
     private var cachedConfigHash: Int = 0
     private var activeExecutionConsole: ExecutionConsole? = null
+    private var generationJob: Job? = null
+    private var benchmarkJob: Job? = null
 
     override fun onCleared() {
         activeExecutionConsole?.cancel()
+        cachedService?.stopGeneration()
+        generationJob?.cancel()
+        benchmarkJob?.cancel()
         // viewModelScope is already being cancelled during clear, so native cleanup uses a short-lived independent scope.
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             executorchRunner.release()
@@ -305,6 +328,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun newChat() {
+        if (_state.value.isGenerating) {
+            cachedService?.stopGeneration()
+            generationJob?.cancel(CancellationException("New chat opened"))
+        }
         _state.update {
             it.copy(
                 messages = emptyList(),
@@ -320,11 +347,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 architectStatus = AgentStatus.IDLE,
                 coderStatus = AgentStatus.IDLE,
                 validatorStatus = AgentStatus.IDLE,
+                inferencePhase = InferencePhase.IDLE,
             )
         }
     }
 
     fun openChatSession(id: String) {
+        if (_state.value.isGenerating) {
+            cachedService?.stopGeneration()
+            generationJob?.cancel(CancellationException("Another chat opened"))
+        }
         viewModelScope.launch {
             val session = chatHistoryRepository.load(id) ?: return@launch
             _state.update {
@@ -334,6 +366,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     inputText = "",
                     isGenerating = false,
                     isThinking = false,
+                    inferencePhase = InferencePhase.IDLE,
                 )
             }
         }
@@ -361,9 +394,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val hash = config.hashCode()
         if (cachedService != null && hash == cachedConfigHash) return cachedService!!
         val service = AiService(executorchRunner, llamaCppRunner, config, getApplication())
+        service.session.setPreviousProcessExit(recoveredProcessExit)
         cachedService = service
         cachedConfigHash = hash
         return service
+    }
+
+    fun dismissPreviousProcessExit() {
+        _state.update { it.copy(previousProcessExit = null) }
     }
 
     fun exportBenchmarkReport(): String {
@@ -399,7 +437,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /** Measures real decode profiles and saves the best thread count for this device and GGUF model. */
-    fun runBenchmarkSuite() {
+    fun runBenchmarkSuite(depth: BenchmarkDepth) {
         if (_state.value.benchmarkRunning) return
         if (_state.value.isGenerating) {
             _state.update { it.copy(benchmarkError = "Wait for the current AI response to finish.") }
@@ -410,112 +448,403 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 benchmarkRunning = true,
                 benchmarkCompletedRuns = 0,
                 benchmarkTotalRuns = 0,
+                benchmarkPhase = "Preparing real on-device workload",
                 benchmarkError = null,
                 benchmarkSummary = null,
+                benchmarkReport = null,
+                benchmarkJson = null,
             )
         }
-        viewModelScope.launch {
+        benchmarkJob = viewModelScope.launch {
+            val thisJob = currentCoroutineContext()[Job]
+            try {
             val config = aiConfigRepository.load()
             if (!config.isConfigured) {
                 _state.update {
-                    it.copy(benchmarkRunning = false, benchmarkError = "Add an on-device model in Settings first.")
+                    it.copy(
+                        benchmarkRunning = false,
+                        benchmarkPhase = null,
+                        benchmarkError = "Add an on-device model in Settings first.",
+                    )
                 }
                 return@launch
             }
             val activeModel = config.activeModel
-            if (activeModel?.format != ModelFormat.GGUF) {
+            if (activeModel == null || activeModel.format == ModelFormat.UNKNOWN) {
                 _state.update {
                     it.copy(
                         benchmarkRunning = false,
-                        benchmarkError = "Thread calibration currently requires a GGUF llama.cpp model.",
+                        benchmarkPhase = null,
+                        benchmarkError = "Select a supported GGUF or PTE model first.",
                     )
                 }
                 return@launch
             }
+            val isGguf = activeModel.format == ModelFormat.GGUF
+
             val service = getService(config)
             service.session.clear()
+            service.session.recordPowerSample(benchmarkPowerSampler.sample("benchmark_start", 0))
             val cpuCores = Runtime.getRuntime().availableProcessors()
             val heuristicThreads = BackendInfo.optimalThreadCount.coerceIn(1, cpuCores)
-            val candidateThreads = buildSet {
-                addAll(1..minOf(4, cpuCores))
-                add(heuristicThreads)
-            }.sorted()
-            val plan = buildList {
-                candidateThreads.forEach { threads ->
-                    add(BenchmarkPlan("T$threads", threads, true))
-                    repeat(3) { add(BenchmarkPlan("T$threads", threads, false)) }
+            val savedCalibration = if (isGguf) {
+                threadCalibrationRepository.load(activeModel.modelPath)
+            } else {
+                null
+            }
+            val candidateThreads = if (isGguf) {
+                when (depth) {
+                    BenchmarkDepth.QUICK -> buildSet {
+                        addAll(1..minOf(MAX_QUICK_BENCHMARK_THREADS, cpuCores))
+                        add(heuristicThreads)
+                    }.sorted()
+                    BenchmarkDepth.DEEP -> (1..minOf(MAX_DEEP_BENCHMARK_THREADS, cpuCores)).toList()
+                    BenchmarkDepth.SUSTAINED -> savedCalibration?.let { listOf(it.threadCount) }
+                        ?: buildSet {
+                            addAll(1..minOf(MAX_QUICK_BENCHMARK_THREADS, cpuCores))
+                            add(heuristicThreads)
+                        }.sorted()
+                }
+            } else {
+                // PTE thread/delegate choices are fixed during model export and
+                // are not controlled by LlmModule's Android generation API.
+                listOf(heuristicThreads)
+            }
+            val generatedTokens = when (depth) {
+                BenchmarkDepth.QUICK -> QUICK_BENCHMARK_OUTPUT_TOKENS
+                BenchmarkDepth.DEEP, BenchmarkDepth.SUSTAINED -> DEEP_BENCHMARK_OUTPUT_TOKENS
+            }
+            val screeningRuns = if (!isGguf) {
+                when (depth) {
+                    BenchmarkDepth.QUICK -> QUICK_MEASURED_RUNS
+                    BenchmarkDepth.DEEP -> PTE_DEEP_MEASURED_RUNS
+                    BenchmarkDepth.SUSTAINED -> 0
+                }
+            } else {
+                when (depth) {
+                    BenchmarkDepth.QUICK -> QUICK_MEASURED_RUNS
+                    BenchmarkDepth.DEEP -> DEEP_SCREENING_RUNS
+                    BenchmarkDepth.SUSTAINED -> if (savedCalibration == null) DEEP_SCREENING_RUNS else 0
                 }
             }
-            _state.update { it.copy(benchmarkTotalRuns = plan.size) }
-            val measured = mutableListOf<ThreadProfileSample>()
-            plan.forEachIndexed { index, run ->
-                val result = service.chatCompletion(
-                    systemPrompt = BENCHMARK_SYSTEM_PROMPT,
-                    history = emptyList(),
-                    userMessage = BENCHMARK_FIXED_PROMPT,
-                    benchmarkOptions = BenchmarkRunOptions(
-                        profile = run.profile,
-                        threadCount = run.threads,
-                        isWarmup = run.warmup,
-                    ),
+            val confirmationRuns = if (isGguf && depth == BenchmarkDepth.DEEP) DEEP_CONFIRMATION_RUNS else 0
+            val sustainedRuns = if (depth == BenchmarkDepth.SUSTAINED) SUSTAINED_MEASURED_RUNS else 0
+            val finalistCount = if (isGguf && depth == BenchmarkDepth.DEEP) {
+                minOf(DEEP_FINALIST_COUNT, candidateThreads.size)
+            } else {
+                0
+            }
+            val screeningTotal = if (!isGguf && depth == BenchmarkDepth.SUSTAINED) {
+                0
+            } else {
+                candidateThreads.size * (screeningRuns + 1)
+            }
+            val confirmationWarmupsPerProfile = if (confirmationRuns > 0) 2 else 0
+            val totalRuns = screeningTotal +
+                finalistCount * (confirmationRuns + confirmationWarmupsPerProfile) +
+                (if (sustainedRuns > 0) sustainedRuns + 1 else 0) +
+                (if (isGguf) 1 else 0)
+
+            service.session.setProtocol(
+                BenchmarkProtocol(
+                    depth = depth,
+                    backend = if (isGguf) "llama.cpp / GGUF" else "ExecuTorch / PTE",
+                    workload = "deterministic_code_generation",
+                    promptSha256 = BenchmarkProtocol.promptSha256(BENCHMARK_FIXED_PROMPT),
+                    generatedTokens = generatedTokens,
+                    candidateThreads = candidateThreads,
+                    screeningMeasuredRuns = screeningRuns,
+                    confirmationMeasuredRuns = confirmationRuns,
+                    sustainedMeasuredRuns = sustainedRuns,
+                    deterministicSeed = if (isGguf) 42 else -1,
+                    temperature = 0.0,
+                    ignoreEos = isGguf,
+                    threadControl = if (isGguf) {
+                        "llama.cpp context load-time n_threads; native context reloaded between profiles"
+                    } else {
+                        "PTE export/runtime controlled; Android LlmModule does not expose worker count"
+                    },
+                ),
+            )
+            _state.update {
+                it.copy(
+                    benchmarkTotalRuns = totalRuns,
+                    benchmarkPhase = if (!isGguf) {
+                        if (depth == BenchmarkDepth.SUSTAINED) {
+                            "Preparing sustained ExecuTorch PTE measurement"
+                        } else {
+                            "Measuring fixed ExecuTorch PTE backend"
+                        }
+                    } else if (depth == BenchmarkDepth.DEEP) {
+                        "Screening ${candidateThreads.size} thread profiles"
+                    } else if (depth == BenchmarkDepth.SUSTAINED) {
+                        "Selecting a sustainable thread profile"
+                    } else {
+                        "Calibrating ${candidateThreads.size} thread profiles"
+                    },
                 )
-                if (result is AiResult.Error) {
-                    _state.update {
-                        it.copy(
-                            benchmarkRunning = false,
-                            benchmarkError = "Run ${index + 1} failed: ${result.message}",
-                        )
-                    }
-                    return@launch
-                }
-                val benchmark = (result as AiResult.Success).benchmark
-                if (!run.warmup && benchmark != null) {
-                    measured += ThreadProfileSample(
-                        threadCount = run.threads,
-                        tokensPerSecond = benchmark.tokensPerSecond,
-                        ttftMs = benchmark.ttftMs,
-                        peakProcessPssBytes = benchmark.peakProcessPssBytes,
-                    )
-                }
-                _state.update { it.copy(benchmarkCompletedRuns = index + 1) }
             }
 
-            val calibration = ThreadProfileSelector.select(measured)
-            val summary = if (calibration == null) {
-                "No valid measured generations were recorded."
-            } else {
-                threadCalibrationRepository.save(activeModel.modelPath, calibration)
-                service.session.setThreadCalibration(heuristicThreads, calibration)
-                val heuristicProfile = ThreadProfileSelector.select(
-                    measured.filter { it.threadCount == heuristicThreads },
-                )
-                val heuristicTps = heuristicProfile?.medianTokensPerSecond ?: 0f
-                val delta = if (heuristicTps > 0f) {
-                    (calibration.medianTokensPerSecond / heuristicTps - 1f) * 100f
-                } else {
-                    0f
+            val measured = mutableListOf<ThreadProfileSample>()
+            var completedRuns = 0
+
+            suspend fun execute(plans: List<BenchmarkPlan>): Boolean {
+                plans.forEach { run ->
+                    if (benchmarkMemoryIsLow()) {
+                        _state.update {
+                            it.copy(
+                                benchmarkRunning = false,
+                                benchmarkPhase = null,
+                                benchmarkError = "Benchmark stopped before Android's low-memory threshold. " +
+                                    "Close other apps, let the phone cool, then retry Quick.",
+                            )
+                        }
+                        return false
+                    }
+                    val result = service.chatCompletion(
+                        systemPrompt = BENCHMARK_SYSTEM_PROMPT,
+                        history = emptyList(),
+                        userMessage = BENCHMARK_FIXED_PROMPT,
+                        benchmarkOptions = BenchmarkRunOptions(
+                            profile = run.profile,
+                            threadCount = run.threads,
+                            isWarmup = run.warmup,
+                            generatedTokens = generatedTokens,
+                            workload = "deterministic_code_generation",
+                            phase = run.phase,
+                        ),
+                    )
+                    service.session.recordPowerSample(
+                        benchmarkPowerSampler.sample("after_${run.phase}", completedRuns + 1),
+                    )
+                    if (result is AiResult.Error) {
+                        _state.update {
+                            it.copy(
+                                benchmarkRunning = false,
+                                benchmarkPhase = null,
+                                benchmarkError = "Run ${completedRuns + 1} failed: ${result.message}",
+                            )
+                        }
+                        return false
+                    }
+                    val benchmark = (result as AiResult.Success).benchmark
+                    if (!run.warmup && benchmark != null) {
+                        measured += ThreadProfileSample(
+                            threadCount = run.threads,
+                            tokensPerSecond = benchmark.tokensPerSecond,
+                            ttftMs = benchmark.ttftMs,
+                            peakProcessPssBytes = benchmark.peakProcessPssBytes,
+                        )
+                    }
+                    completedRuns += 1
+                    _state.update { it.copy(benchmarkCompletedRuns = completedRuns) }
                 }
-                String.format(
-                    Locale.US,
-                    "Selected %d thread(s): %.2f tok/s median (%+.1f%% vs %d-thread heuristic) · TTFT %d ms · saved for normal chat",
-                    calibration.threadCount,
-                    calibration.medianTokensPerSecond,
-                    delta,
-                    heuristicThreads,
-                    calibration.averageTtftMs,
+                return true
+            }
+
+            fun phasePlan(threads: List<Int>, phase: String, measuredRuns: Int): List<BenchmarkPlan> =
+                buildList {
+                    threads.forEach { count ->
+                        val profile = if (isGguf) "T$count" else "PTE"
+                        add(BenchmarkPlan(profile, count, true, phase))
+                        repeat(measuredRuns) { add(BenchmarkPlan(profile, count, false, phase)) }
+                    }
+                }
+
+            fun counterbalancedConfirmationPlan(
+                threads: List<Int>,
+                measuredRuns: Int,
+            ): List<BenchmarkPlan> = buildList {
+                if (threads.isEmpty() || measuredRuns <= 0) return@buildList
+                val firstBlockRuns = (measuredRuns + 1) / 2
+                val secondBlockRuns = measuredRuns - firstBlockRuns
+                listOf(threads to firstBlockRuns, threads.reversed() to secondBlockRuns)
+                    .filter { (_, runs) -> runs > 0 }
+                    .forEach { (order, runs) ->
+                        order.forEach { count ->
+                            add(BenchmarkPlan("T$count", count, true, "confirmation"))
+                            repeat(runs) {
+                                add(BenchmarkPlan("T$count", count, false, "confirmation"))
+                            }
+                        }
+                    }
+            }
+
+            // KotlinLlamaCpp configures native worker threads when the context is loaded.
+            // Grouped plans therefore reload once per contiguous profile, then warm it before
+            // collecting measurements at that load-configured thread count.
+            val orderedCandidates = if (isGguf) {
+                listOf(heuristicThreads) + candidateThreads.filter { it != heuristicThreads }
+            } else {
+                candidateThreads
+            }
+            if (!(!isGguf && depth == BenchmarkDepth.SUSTAINED) &&
+                !execute(phasePlan(orderedCandidates, "screening", screeningRuns))
+            ) {
+                return@launch
+            }
+
+            val confirmedThreads = if (isGguf && depth == BenchmarkDepth.DEEP) {
+                val finalists = measured
+                    .groupBy { it.threadCount }
+                    .mapValues { (_, samples) -> samples.map { it.tokensPerSecond }.average() }
+                    .entries
+                    .sortedByDescending { it.value }
+                    .take(finalistCount)
+                    .map { it.key }
+                    .sorted()
+                service.session.setConfirmationThreads(finalists)
+                _state.update {
+                    it.copy(benchmarkPhase = "Confirming top profiles: ${finalists.joinToString()}")
+                }
+                if (!execute(counterbalancedConfirmationPlan(finalists, confirmationRuns))) {
+                    return@launch
+                }
+                finalists
+            } else {
+                candidateThreads
+            }
+
+            val selectionSamples = measured.filter { it.threadCount in confirmedThreads }
+            var calibration = if (isGguf) {
+                ThreadProfileSelector.select(selectionSamples) ?: savedCalibration?.takeIf {
+                    depth == BenchmarkDepth.SUSTAINED && it.threadCount in confirmedThreads
+                }
+            } else {
+                null
+            }
+            fun attachHeuristicComparison(value: com.pocketide.data.ai.ThreadCalibration):
+                com.pocketide.data.ai.ThreadCalibration {
+                val currentHeuristicMedian = com.pocketide.data.ai.BenchmarkStatistics.calculate(
+                    measured.filter { it.threadCount == heuristicThreads }.map { it.tokensPerSecond },
+                )?.median?.toFloat()
+                return value.copy(
+                    comparisonThreadCount = if (currentHeuristicMedian != null) {
+                        heuristicThreads
+                    } else {
+                        value.comparisonThreadCount
+                    },
+                    comparisonMedianTokensPerSecond = currentHeuristicMedian
+                        ?: value.comparisonMedianTokensPerSecond,
                 )
             }
+            calibration = calibration?.let(::attachHeuristicComparison)
+            if (depth == BenchmarkDepth.SUSTAINED) {
+                val sustainedThread = calibration?.threadCount ?: candidateThreads.first()
+                if (isGguf) service.session.setConfirmationThreads(listOf(sustainedThread))
+                _state.update {
+                    it.copy(
+                        benchmarkPhase = if (isGguf) {
+                            "Measuring sustained speed, energy, and temperature on $sustainedThread thread(s)"
+                        } else {
+                            "Measuring sustained speed, energy, and temperature on the fixed PTE backend"
+                        },
+                    )
+                }
+                service.session.recordPowerSample(
+                    benchmarkPowerSampler.sample("sustained_start", completedRuns),
+                )
+                if (!execute(phasePlan(listOf(sustainedThread), "sustained", sustainedRuns))) return@launch
+                service.session.recordPowerSample(
+                    benchmarkPowerSampler.sample("sustained_complete", completedRuns),
+                )
+                if (isGguf && calibration != null) {
+                    val previousCalibration = calibration
+                    calibration = ThreadProfileSelector.select(
+                        measured.filter { it.threadCount == sustainedThread },
+                    )?.copy(
+                        comparisonThreadCount = previousCalibration.comparisonThreadCount,
+                        comparisonMedianTokensPerSecond = previousCalibration.comparisonMedianTokensPerSecond,
+                    )?.let(::attachHeuristicComparison) ?: previousCalibration
+                }
+            }
+            val nativeBenchmark = if (isGguf && calibration != null) {
+                _state.update { it.copy(benchmarkPhase = "Running native prompt/decode microbenchmark") }
+                service.runNativeKernelBenchmark(
+                    threadCount = calibration.threadCount,
+                    promptTokens = NATIVE_BENCHMARK_PROMPT_TOKENS,
+                    generatedTokens = NATIVE_BENCHMARK_GENERATED_TOKENS,
+                    repetitions = if (depth == BenchmarkDepth.DEEP) {
+                        DEEP_NATIVE_REPETITIONS
+                    } else {
+                        QUICK_NATIVE_REPETITIONS
+                    },
+                )
+            } else {
+                null
+            }
+            service.session.setNativeKernelBenchmark(
+                result = nativeBenchmark,
+                error = when {
+                    !isGguf -> "Not applicable to PTE; real performance is measured through ExecuTorch generation callbacks"
+                    calibration != null && nativeBenchmark == null ->
+                        "Runtime returned no parseable native benchmark result"
+                    else -> null
+                },
+            )
+            if (isGguf) {
+                completedRuns += 1
+                service.session.recordPowerSample(
+                    benchmarkPowerSampler.sample("after_native_microbenchmark", completedRuns),
+                )
+                _state.update { it.copy(benchmarkCompletedRuns = completedRuns) }
+            }
+
+            if (isGguf && calibration != null) {
+                threadCalibrationRepository.save(activeModel.modelPath, calibration)
+                service.session.setThreadCalibration(heuristicThreads, calibration)
+            }
+            service.session.recordPowerSample(benchmarkPowerSampler.sample("benchmark_complete", completedRuns))
+            val summary = service.session.dashboard()
             val report = service.session.exportReport()
             val json = service.session.exportJson()
             _state.update {
                 it.copy(
                     benchmarkRunning = false,
+                    benchmarkPhase = null,
                     benchmarkSummary = summary,
                     benchmarkReport = report,
                     benchmarkJson = json,
                 )
             }
+            } catch (cancelled: CancellationException) {
+                _state.update {
+                    it.copy(
+                        benchmarkRunning = false,
+                        benchmarkPhase = null,
+                        benchmarkError = "Benchmark cancelled. No incomplete calibration was saved.",
+                    )
+                }
+                throw cancelled
+            } catch (error: Throwable) {
+                Log.e(BENCHMARK_TAG, "Benchmark suite failed", error)
+                _state.update {
+                    it.copy(
+                        benchmarkRunning = false,
+                        benchmarkPhase = null,
+                        benchmarkError = "Benchmark stopped safely: " +
+                            (error.message ?: error.javaClass.simpleName) +
+                            ". Close other apps, cool the phone, and try Quick first.",
+                    )
+                }
+            } finally {
+                if (benchmarkJob === thisJob) benchmarkJob = null
+            }
         }
+    }
+
+    fun stopBenchmark() {
+        if (!_state.value.benchmarkRunning) return
+        cachedService?.stopGeneration()
+        benchmarkJob?.cancel(CancellationException("Benchmark stopped by user"))
+    }
+
+    private fun benchmarkMemoryIsLow(): Boolean {
+        val manager = getApplication<Application>()
+            .getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val info = android.app.ActivityManager.MemoryInfo()
+        manager.getMemoryInfo(info)
+        return info.lowMemory
     }
 
     fun clearBenchmark() {
@@ -523,6 +852,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         _state.update {
             it.copy(
                 benchmarkCompletedRuns = 0,
+                benchmarkTotalRuns = 0,
+                benchmarkPhase = null,
                 benchmarkSummary = null,
                 benchmarkError = null,
                 benchmarkReport = null,
@@ -610,76 +941,75 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 coderStatus = AgentStatus.IDLE,
                 validatorStatus = AgentStatus.IDLE,
                 activeTab = ActivityTab.AI_CHAT,
+                inferencePhase = InferencePhase.PREPARING_PROMPT,
             )
         }
 
-        viewModelScope.launch {
-            val config = aiConfigRepository.load()
-            val service = getService(config)
-            val systemPrompt = when (currentMode) {
-                AiMode.CODE -> if (currentModelMode == ModelMode.SWARM) ARCHITECT_SYSTEM_PROMPT else CODE_MODE_PROMPT_V2
-                AiMode.ASK -> ASK_MODE_PROMPT
-                AiMode.PLAN -> PLAN_MODE_PROMPT
-            }
-
-            // Build managed context to fit within the model's context window
-            val managed = ContextManager.buildContext(
-                systemPrompt = systemPrompt,
-                history = historyForRequest,
-                userMessage = prompt,
-                files = _state.value.files,
-                contextWindowSize = config.contextWindowSize,
-                activeFileIndex = _state.value.activeFileIndex,
-                enableCodeContext = config.enableCodeContext,
-                enableHistorySummary = config.enableHistorySummary,
-            )
-
-            val startTime = System.currentTimeMillis()
-            var tokenCount = 0
-
-            val result = service.chatCompletion(
-                systemPrompt = managed.systemPrompt,
-                history = managed.history,
-                userMessage = managed.userMessage,
-                onToken = { _ ->
-                    if (_state.value.isThinking) {
-                        _state.update { it.copy(isThinking = false) }
+        generationJob = viewModelScope.launch {
+            val thisJob = currentCoroutineContext()[Job]
+            try {
+                val config = aiConfigRepository.load()
+                val service = getService(config)
+                val resourcePlan = service.prepareResourcePlan()
+                if (resourcePlan == null) {
+                    showGenerationFailure("No configured model is available for memory planning.")
+                    return@launch
+                }
+                if (!resourcePlan.allowed) {
+                    showGenerationFailure(resourcePlan.blockingMessage())
+                    return@launch
+                }
+                val systemPrompt = when (currentMode) {
+                    AiMode.CODE -> if (currentModelMode == ModelMode.SWARM) {
+                        ARCHITECT_SYSTEM_PROMPT
+                    } else {
+                        CODE_MODE_PROMPT_V2
                     }
-                    tokenCount++
-                },
-            )
-
-            val elapsedSec = (System.currentTimeMillis() - startTime) / 1000f
-            val callbackTps = if (elapsedSec > 0f) tokenCount / elapsedSec else null
-            val tps = (result as? AiResult.Success)?.benchmark?.tokensPerSecond
-                ?.takeIf { it > 0f }
-                ?: callbackTps
-            val benchTtft = (result as? AiResult.Success)?.benchmark?.ttftMs?.takeIf { it >= 0 }
-            val benchMemDelta = (result as? AiResult.Success)?.benchmark?.let {
-                (it.memoryDeltaBytes / (1024f * 1024f))
-            }
-            val benchStrategy = (result as? AiResult.Success)?.tuning?.strategy?.displayName
-            val benchPipelineLog = (result as? AiResult.Success)?.pipelineLog
-
-            when (result) {
-                is AiResult.Error -> _state.update {
-                    it.copy(
-                        messages = it.messages + ChatMessage(
-                            role = MessageRole.SYSTEM,
-                            content = "Error: ${result.message}",
-                            agentStatus = AgentStatus.ERROR,
-                        ),
-                        architectStatus = AgentStatus.ERROR,
-                        isGenerating = false,
-                        isThinking = false,
-                    )
+                    AiMode.ASK -> ASK_MODE_PROMPT
+                    AiMode.PLAN -> PLAN_MODE_PROMPT
                 }
 
-                is AiResult.Success -> {
-                    when (currentMode) {
+                // Prompt pruning and the native context must use the same resource decision.
+                val managed = ContextManager.buildContext(
+                    systemPrompt = systemPrompt,
+                    history = historyForRequest,
+                    userMessage = prompt,
+                    files = _state.value.files,
+                    contextWindowSize = resourcePlan.effectiveContext,
+                    activeFileIndex = _state.value.activeFileIndex,
+                    enableCodeContext = config.enableCodeContext,
+                    enableHistorySummary = config.enableHistorySummary,
+                )
+
+                val startTime = System.currentTimeMillis()
+                var tokenCount = 0
+                val result = service.chatCompletion(
+                    systemPrompt = managed.systemPrompt,
+                    history = managed.history,
+                    userMessage = managed.userMessage,
+                    resourcePlan = resourcePlan,
+                    onPhase = ::updateInferencePhase,
+                    onToken = { _ -> tokenCount++ },
+                )
+
+                val elapsedSec = (System.currentTimeMillis() - startTime) / 1000f
+                val callbackTps = if (elapsedSec > 0f) tokenCount / elapsedSec else null
+                val tps = (result as? AiResult.Success)?.benchmark?.tokensPerSecond
+                    ?.takeIf { it > 0f }
+                    ?: callbackTps
+                val benchTtft = (result as? AiResult.Success)?.benchmark?.ttftMs?.takeIf { it >= 0 }
+                val benchMemDelta = (result as? AiResult.Success)?.benchmark?.let {
+                    (it.memoryDeltaBytes / (1024f * 1024f))
+                }
+                val benchStrategy = (result as? AiResult.Success)?.tuning?.strategy?.displayName
+                val benchPipelineLog = (result as? AiResult.Success)?.pipelineLog
+
+                when (result) {
+                    is AiResult.Error -> showGenerationFailure(result.message)
+                    is AiResult.Success -> when (currentMode) {
                         AiMode.CODE -> {
                             if (currentModelMode == ModelMode.SWARM) {
-                                runSwarmPipeline(service, config, result.content, tps)
+                                runSwarmPipeline(service, config, resourcePlan, result.content, tps)
                             } else {
                                 applyAiResponse(result.content, tps)
                             }
@@ -698,6 +1028,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                                 architectStatus = AgentStatus.DONE,
                                 isGenerating = false,
                                 isThinking = false,
+                                inferencePhase = InferencePhase.COMPLETE,
                                 lastTokensPerSecond = tps,
                                 lastTtftMs = benchTtft,
                                 lastMemoryDeltaMb = benchMemDelta,
@@ -719,6 +1050,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                                 architectStatus = AgentStatus.DONE,
                                 isGenerating = false,
                                 isThinking = false,
+                                inferencePhase = InferencePhase.COMPLETE,
                                 lastTokensPerSecond = tps,
                                 lastTtftMs = benchTtft,
                                 lastMemoryDeltaMb = benchMemDelta,
@@ -728,7 +1060,69 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
                 }
+            } catch (cancelled: CancellationException) {
+                if (_state.value.inferencePhase != InferencePhase.CANCELLED) {
+                    _state.update {
+                        it.copy(
+                            isGenerating = false,
+                            isThinking = false,
+                            inferencePhase = InferencePhase.CANCELLED,
+                        )
+                    }
+                }
+                throw cancelled
+            } catch (error: Throwable) {
+                Log.e(AI_GENERATION_TAG, "AI generation failed", error)
+                showGenerationFailure(error.message ?: error.javaClass.simpleName)
+            } finally {
+                _state.update { it.copy(isGenerating = false, isThinking = false) }
+                if (generationJob === thisJob) generationJob = null
             }
+        }
+    }
+
+    fun stopGeneration() {
+        if (!_state.value.isGenerating) return
+        cachedService?.stopGeneration()
+        generationJob?.cancel(CancellationException("Stopped by user"))
+        _state.update {
+            it.copy(
+                messages = it.messages + ChatMessage(
+                    role = MessageRole.SYSTEM,
+                    content = "Generation stopped.",
+                    agentStatus = AgentStatus.IDLE,
+                ),
+                isGenerating = false,
+                isThinking = false,
+                inferencePhase = InferencePhase.CANCELLED,
+            )
+        }
+    }
+
+    private fun updateInferencePhase(phase: InferencePhase) {
+        _state.update {
+            if (!it.isGenerating) it else it.copy(
+                inferencePhase = phase,
+                isThinking = phase == InferencePhase.PREPARING_PROMPT ||
+                    phase == InferencePhase.LOADING_MODEL ||
+                    phase == InferencePhase.READING_PROMPT,
+            )
+        }
+    }
+
+    private fun showGenerationFailure(message: String) {
+        _state.update {
+            it.copy(
+                messages = it.messages + ChatMessage(
+                    role = MessageRole.SYSTEM,
+                    content = "Error: $message",
+                    agentStatus = AgentStatus.ERROR,
+                ),
+                architectStatus = AgentStatus.ERROR,
+                isGenerating = false,
+                isThinking = false,
+                inferencePhase = InferencePhase.FAILED,
+            )
         }
     }
 
@@ -741,6 +1135,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun runSwarmPipeline(
         service: AiService,
         config: com.pocketide.data.ai.AiConfig,
+        resourcePlan: InferenceResourcePlan,
         architectResponse: String,
         architectTps: Float?,
     ) {
@@ -772,7 +1167,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             history = emptyList(),
             userMessage = coderUserMessage,
             files = _state.value.files,
-            contextWindowSize = config.contextWindowSize,
+            contextWindowSize = resourcePlan.effectiveContext,
             activeFileIndex = _state.value.activeFileIndex,
             enableCodeContext = config.enableCodeContext,
             enableHistorySummary = config.enableHistorySummary,
@@ -784,12 +1179,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             systemPrompt = coderManaged.systemPrompt,
             history = coderManaged.history,
             userMessage = coderManaged.userMessage,
-            onToken = { _ ->
-                if (_state.value.isThinking) {
-                    _state.update { it.copy(isThinking = false) }
-                }
-                coderTokens++
-            },
+            resourcePlan = resourcePlan,
+            onPhase = ::updateInferencePhase,
+            onToken = { _ -> coderTokens++ },
         )
         val callbackCoderTps = ((System.currentTimeMillis() - coderStart) / 1000f).let { el ->
             if (el > 0f) coderTokens / el else null
@@ -810,12 +1202,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         coderStatus = AgentStatus.ERROR,
                         isGenerating = false,
                         isThinking = false,
+                        inferencePhase = InferencePhase.FAILED,
                     )
                 }
                 return
             }
             is AiResult.Success -> {
-                applyAiResponse(coderResult.content, coderTps)
+                if (!applyAiResponse(coderResult.content, coderTps)) return
             }
         }
 
@@ -846,13 +1239,20 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     isThinking = false,
                     coderStatus = AgentStatus.DONE,
                     validatorStatus = AgentStatus.DONE,
+                    inferencePhase = InferencePhase.COMPLETE,
                 )
             }
             return
         }
 
         // Step 4: Validator — autonomous repair loop
-        runAutonomousRepair(service, config, activeFile, maxIterations = config.maxRepairIterations)
+        runAutonomousRepair(
+            service,
+            config,
+            resourcePlan,
+            activeFile,
+            maxIterations = config.maxRepairIterations,
+        )
     }
 
     /**
@@ -863,6 +1263,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun runAutonomousRepair(
         service: AiService,
         config: com.pocketide.data.ai.AiConfig,
+        resourcePlan: InferenceResourcePlan,
         initialFile: CodeFile,
         maxIterations: Int,
     ) {
@@ -906,7 +1307,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 history = emptyList(),
                 userMessage = repairPrompt,
                 files = _state.value.files,
-                contextWindowSize = config.contextWindowSize,
+                contextWindowSize = resourcePlan.effectiveContext,
                 activeFileIndex = _state.value.activeFileIndex,
                 enableCodeContext = config.enableCodeContext,
                 enableHistorySummary = config.enableHistorySummary,
@@ -916,11 +1317,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 systemPrompt = repairManaged.systemPrompt,
                 history = repairManaged.history,
                 userMessage = repairManaged.userMessage,
-                onToken = { _ ->
-                    if (_state.value.isThinking) {
-                        _state.update { it.copy(isThinking = false) }
-                    }
-                },
+                resourcePlan = resourcePlan,
+                onPhase = ::updateInferencePhase,
             )
 
             when (repairResult) {
@@ -935,12 +1333,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                             validatorStatus = AgentStatus.ERROR,
                             isGenerating = false,
                             isThinking = false,
+                            inferencePhase = InferencePhase.FAILED,
                         )
                     }
                     return
                 }
                 is AiResult.Success -> {
-                    applyAiResponse(repairResult.content, null)
+                    if (!applyAiResponse(repairResult.content, null)) return
                 }
             }
 
@@ -974,6 +1373,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         validatorStatus = AgentStatus.DONE,
                         isGenerating = false,
                         isThinking = false,
+                        inferencePhase = InferencePhase.COMPLETE,
                     )
                 }
                 return
@@ -999,12 +1399,36 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 validatorStatus = AgentStatus.ERROR,
                 isGenerating = false,
                 isThinking = false,
+                inferencePhase = InferencePhase.FAILED,
             )
         }
     }
 
-    private fun applyAiResponse(rawContent: String, tokensPerSecond: Float? = null) {
+    private fun applyAiResponse(rawContent: String, tokensPerSecond: Float? = null): Boolean {
+        _state.update { it.copy(inferencePhase = InferencePhase.APPLYING_FILES, isThinking = false) }
         val parsed = parseAiResponse(rawContent)
+
+        if (parsed.isTruncated) {
+            _state.update {
+                it.copy(
+                    messages = it.messages + ChatMessage(
+                        role = MessageRole.CODER,
+                        content = rawContent +
+                            "\n\nResponse ended before the closing code fence. The partial output was not " +
+                            "written over your file. Copy it here, or ask the model to regenerate a smaller complete version.",
+                        agentStatus = AgentStatus.ERROR,
+                        tokensPerSecond = tokensPerSecond,
+                    ),
+                    architectStatus = AgentStatus.DONE,
+                    coderStatus = AgentStatus.ERROR,
+                    isGenerating = false,
+                    isThinking = false,
+                    inferencePhase = InferencePhase.FAILED,
+                    lastTokensPerSecond = tokensPerSecond,
+                )
+            }
+            return false
+        }
 
         _state.update {
             it.copy(
@@ -1032,8 +1456,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             )
         }
         if (generatedFiles.isEmpty()) {
-            _state.update { it.copy(isGenerating = false) }
-            return
+            _state.update {
+                it.copy(
+                    isGenerating = false,
+                    isThinking = false,
+                    inferencePhase = InferencePhase.FAILED,
+                )
+            }
+            return false
         }
 
         val s = _state.value
@@ -1079,6 +1509,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 activeFileContent = activeGenerated.content,
                 isGenerating = false,
                 isThinking = false,
+                inferencePhase = InferencePhase.COMPLETE,
                 lastTokensPerSecond = tokensPerSecond,
                 unsavedCount = newFiles.count { f -> f.isModified },
             )
@@ -1087,6 +1518,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             repository.saveFiles(s.projectName, newFiles)
         }
+        return true
     }
 
     fun selectFile(index: Int) {
@@ -1288,10 +1720,34 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             )
         }
 
-        viewModelScope.launch {
-            val config = aiConfigRepository.load()
-            val service = getService(config)
-            runAutonomousRepair(service, config, activeFile, maxIterations = config.maxRepairIterations)
+        generationJob = viewModelScope.launch {
+            val thisJob = currentCoroutineContext()[Job]
+            try {
+                val config = aiConfigRepository.load()
+                val service = getService(config)
+                val resourcePlan = service.prepareResourcePlan()
+                if (resourcePlan == null || !resourcePlan.allowed) {
+                    showGenerationFailure(
+                        resourcePlan?.blockingMessage() ?: "Could not inspect device memory before repair.",
+                    )
+                    return@launch
+                }
+                runAutonomousRepair(
+                    service,
+                    config,
+                    resourcePlan,
+                    activeFile,
+                    maxIterations = config.maxRepairIterations,
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                Log.e(AI_GENERATION_TAG, "AI repair failed", error)
+                showGenerationFailure(error.message ?: error.javaClass.simpleName)
+            } finally {
+                _state.update { it.copy(isGenerating = false, isThinking = false) }
+                if (generationJob === thisJob) generationJob = null
+            }
         }
     }
 }
@@ -1300,7 +1756,29 @@ private const val BENCHMARK_SYSTEM_PROMPT = """You are an on-device coding model
 
 private const val BENCHMARK_FIXED_PROMPT = "Write Python code that parses JSON Lines sensor readings and returns min, max, and average per sensor while safely skipping malformed records. Output code only."
 
-private data class BenchmarkPlan(val profile: String, val threads: Int, val warmup: Boolean)
+private const val MAX_QUICK_BENCHMARK_THREADS = 4
+private const val MAX_DEEP_BENCHMARK_THREADS = 8
+private const val QUICK_BENCHMARK_OUTPUT_TOKENS = 96
+private const val DEEP_BENCHMARK_OUTPUT_TOKENS = 128
+private const val QUICK_MEASURED_RUNS = 3
+private const val PTE_DEEP_MEASURED_RUNS = 5
+private const val DEEP_SCREENING_RUNS = 2
+private const val DEEP_CONFIRMATION_RUNS = 4
+private const val DEEP_FINALIST_COUNT = 3
+private const val SUSTAINED_MEASURED_RUNS = 8
+private const val NATIVE_BENCHMARK_PROMPT_TOKENS = 128
+private const val NATIVE_BENCHMARK_GENERATED_TOKENS = 32
+private const val QUICK_NATIVE_REPETITIONS = 3
+private const val DEEP_NATIVE_REPETITIONS = 5
+private const val BENCHMARK_TAG = "PocketIDEBenchmark"
+private const val AI_GENERATION_TAG = "PocketIDEGeneration"
+
+private data class BenchmarkPlan(
+    val profile: String,
+    val threads: Int,
+    val warmup: Boolean,
+    val phase: String,
+)
 
 private const val CODE_MODE_PROMPT_V2 = """You are PocketIDE's local coding agent. Build the requested program directly. Never refuse a normal coding request or say that an AI cannot build it. If one detail is unavailable on Android, implement the closest runnable local version and mention that limit only in PLAN.
 
@@ -1311,7 +1789,7 @@ FILE: filename.ext
 complete runnable code
 ```
 
-For multiple files, repeat FILE plus its fenced code block. No commentary outside this format. Do not use placeholders or TODOs.
+For multiple files, repeat FILE plus its fenced code block. No commentary outside this format. Do not use placeholders or TODOs. Keep the implementation compact enough to finish. Never stop inside a string or code block, and always close every quote and code fence before ending.
 
 Runtime facts:
 - Python is genuine CPython 3.11. input(), functions, classes, exceptions, sibling-file imports, and most standard-library modules work. Use input() for interactive terminal programs.
@@ -1333,7 +1811,7 @@ FILE: filename.ext
 full file content
 ```
 
-Repeat FILE blocks when the plan needs multiple files. No TODOs and no text outside the format. Python is CPython 3.11 with input() and sibling imports. JavaScript/TypeScript must remain Rhino ES5-compatible. Lua, SQLite, Android sh, and BeanShell are available. A global hardware object exposes Android hardware when requested."""
+Repeat FILE blocks when the plan needs multiple files. No TODOs and no text outside the format. Keep the implementation compact enough to finish, and always close every string and code fence. Python is CPython 3.11 with input() and sibling imports. JavaScript/TypeScript must remain Rhino ES5-compatible. Lua, SQLite, Android sh, and BeanShell are available. A global hardware object exposes Android hardware when requested."""
 
 private const val ASK_MODE_PROMPT = """You are a knowledgeable assistant inside PocketIDE, an on-device Android IDE.
 The user is in ASK mode — they want explanations, not file modifications.

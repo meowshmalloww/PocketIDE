@@ -26,9 +26,12 @@ models/*
 !models/.gitkeep
 *.gguf
 *.pte
+*.model
 
 # Local Kotlin/Gradle compiler state
 .kotlin/
 
-# Planning docs — not for public repo
-docs/
+# Public validation and submission documentation belongs in the repository.
+/docs/planning/
+/docs/DECISIONS.md
+/docs/PROGRESS.md

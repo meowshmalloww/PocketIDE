@@ -117,6 +117,32 @@ class CodeExecutorTest {
     }
 
     @Test
+    fun `javascript execution has no 71 line source limit`() = runBlocking {
+        val code = buildString {
+            repeat(160) { index -> appendLine("var value${index + 1} = ${index + 1};") }
+            appendLine("console.log(value160);")
+        }
+
+        val result = executor.execute(code, Language.JAVASCRIPT)
+
+        assertEquals(ExecutionStatus.PASSED, result.status)
+        assertEquals("160", result.stdout.trim())
+    }
+
+    @Test
+    fun `unterminated javascript string explains source and truncation possibility`() = runBlocking {
+        val result = executor.execute(
+            "var message = 'first line\nsecond line';",
+            Language.JAVASCRIPT,
+        )
+
+        assertEquals(ExecutionStatus.FAILED, result.status)
+        assertTrue(result.stderr.contains("Location: main.js:"))
+        assertTrue(result.stderr.contains("generated file ended early"))
+        assertTrue(result.stderr.contains("does not impose a source line-count limit"))
+    }
+
+    @Test
     fun `console log with multiple arguments`() = runBlocking {
         val result = executor.execute("console.log('a', 'b', 'c');", Language.JAVASCRIPT)
 
