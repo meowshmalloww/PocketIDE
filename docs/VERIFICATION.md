@@ -38,6 +38,27 @@ Result:
 
 The model smoke run used a 512 token context on the x86_64 emulator. It proves the packaged JNI and lifecycle path, not Arm throughput. The physical LGE benchmark reports remain the source for Arm performance, memory, thermal, and device-energy claims.
 
+## Public clean-clone reproduction
+
+Public commit: `8c2cb6235cf0e22d92b4874e007873959f941c9b`
+
+The repository was cloned into a new temporary directory with no project `local.properties`. `ANDROID_HOME` was set to the installed Android SDK as documented in the README, then the public verification task was run with no source or configuration edits:
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+.\gradlew.bat verifySubmission
+```
+
+Result:
+
+* Working tree remained clean
+* 30 JVM test suites ran
+* 213 tests passed with 0 failures, 0 errors, and 0 skipped
+* Lint completed with 0 errors and 40 non-blocking warnings
+* Default dual-ABI debug APK assembly completed at 138,394,400 bytes
+
+The first automated attempt was externally terminated by a command timeout during the from-scratch C++ build. That interruption left a partial APK and a Windows lint-cache file lock. Following Gradle's documented recovery, the daemon was stopped, the temporary app outputs were cleaned, and the same untouched clone completed successfully with `--no-daemon`. No project file was changed to obtain the passing result.
+
 ## Final Arm64 demo artifact
 
 The final phone-only artifact was assembled with:
