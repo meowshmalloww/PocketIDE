@@ -154,7 +154,7 @@ Android, Kotlin, Jetpack Compose, Arm64, Android NDK, llama.cpp, ExecuTorch, GGU
 Add these in this order:
 
 1. Source code: `https://github.com/meowshmalloww/PocketIDE`
-2. APK: add the public GitHub Release or Google Drive download link after a clean install test
+2. APK: `https://github.com/meowshmalloww/PocketIDE/releases/tag/v1.0.0-arm-hackathon`
 3. Video: add the public YouTube link after upload
 4. Benchmark artifacts: add a direct repository link to the exact schema 9 text reports and the clearly labeled SHA-256-indexed JSON transcription
 

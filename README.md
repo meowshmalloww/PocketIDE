@@ -6,6 +6,12 @@ Built for the [Arm AI Optimization Challenge 2026](https://arm-ai-optimization-c
 
 ![PocketIDE local Android architecture](docs/assets/architecture.svg)
 
+## Download
+
+The judge-ready Arm64 APK and checksum are published in the [v1.0.0 Arm Hackathon release](https://github.com/meowshmalloww/PocketIDE/releases/tag/v1.0.0-arm-hackathon). The APK is 92,248,182 bytes and its SHA-256 is `3d707cfd9a71ac9bd5914120675a6518c64bfa6f58f24f13b9e8ef27986f8303`.
+
+Models are not bundled in the APK. Import a compatible GGUF file after installation, or use one of the download options in Settings.
+
 ## What it does
 
 - Runs GGUF language models locally through llama.cpp; ExecuTorch `.pte` support is also included.
