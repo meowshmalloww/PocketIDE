@@ -15,6 +15,8 @@ internal object GgufMetadataReader {
         val attentionHeadCount: Int,
         val attentionKvHeadCount: Int,
         val attentionKeyLength: Int,
+        val expertCount: Int?,
+        val expertUsedCount: Int?,
     )
 
     fun read(file: File): Metadata? = runCatching {
@@ -65,6 +67,8 @@ internal object GgufMetadataReader {
                 ?.positiveInt() ?: heads,
             attentionKeyLength = values.longValue(prefix + "attention.key_length")
                 ?.positiveInt() ?: (embedding / heads).coerceAtLeast(1),
+            expertCount = values.longValue(prefix + "expert_count")?.positiveInt(),
+            expertUsedCount = values.longValue(prefix + "expert_used_count")?.positiveInt(),
         )
     }
 
@@ -82,8 +86,11 @@ internal object GgufMetadataReader {
     private fun hasCompleteArchitecture(values: Map<String, Any>): Boolean {
         if (!hasCoreArchitecture(values)) return false
         val architecture = values[GENERAL_ARCHITECTURE] as String
-        return values.containsKey("$architecture.attention.head_count_kv") &&
+        val attentionComplete = values.containsKey("$architecture.attention.head_count_kv") &&
             values.containsKey("$architecture.attention.key_length")
+        val moeComplete = !architecture.contains("moe", ignoreCase = true) ||
+            values.containsKey("$architecture.expert_count")
+        return attentionComplete && moeComplete
     }
 
     private fun isArchitectureKey(key: String): Boolean =
@@ -189,6 +196,8 @@ internal object GgufMetadataReader {
         ".attention.head_count",
         ".attention.head_count_kv",
         ".attention.key_length",
+        ".expert_count",
+        ".expert_used_count",
     )
 
     private val GGUF_MAGIC = byteArrayOf(0x47, 0x47, 0x55, 0x46)

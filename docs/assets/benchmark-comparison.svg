@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">PocketIDE physical Arm phone benchmark comparison</title>
+  <desc id="desc">On an LGE LM Q620, calibrated two-thread GGUF inference reached 11.73 tokens per second versus 8.12 with four threads, and median TTFT fell from 132 to 87 milliseconds.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#080d16"/><stop offset="1" stop-color="#18112a"/></linearGradient>
+    <linearGradient id="good" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#7258ff"/><stop offset="1" stop-color="#26d5c8"/></linearGradient>
+    <style>
+      .h1{font:700 54px system-ui,sans-serif;fill:#fff}.sub{font:400 23px system-ui,sans-serif;fill:#abb4c9}
+      .label{font:600 24px system-ui,sans-serif;fill:#e9ebf5}.value{font:700 31px system-ui,sans-serif;fill:#fff}
+      .call{font:700 62px system-ui,sans-serif;fill:#55e1d1}.fine{font:400 18px system-ui,sans-serif;fill:#8993a9}
+    </style>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <text x="80" y="88" class="h1">Fewer threads were faster on the real phone</text>
+  <text x="80" y="130" class="sub">Qwen2.5 Coder 1.5B Q4_0 · LGE LM Q620 · Android 12 · schema 9 Deep evidence</text>
+
+  <rect x="80" y="190" width="930" height="610" rx="30" fill="#141b2a" stroke="#303a52" stroke-width="2"/>
+  <text x="130" y="255" class="label">Median decode throughput · higher is better</text>
+  <text x="130" y="323" class="label">4 thread heuristic</text>
+  <rect x="390" y="285" width="390" height="55" rx="12" fill="#4c5263"/>
+  <text x="805" y="323" class="value">8.12 tok/s</text>
+  <text x="130" y="403" class="label">2 thread calibrated</text>
+  <rect x="390" y="365" width="565" height="55" rx="12" fill="url(#good)"/>
+  <text x="805" y="403" class="value">11.73 tok/s</text>
+
+  <line x1="130" y1="482" x2="960" y2="482" stroke="#303a52" stroke-width="2"/>
+  <text x="130" y="545" class="label">Median time to first token · lower is better</text>
+  <text x="130" y="613" class="label">4 thread heuristic</text>
+  <rect x="390" y="575" width="565" height="55" rx="12" fill="#4c5263"/>
+  <text x="805" y="613" class="value">132 ms</text>
+  <text x="130" y="693" class="label">2 thread calibrated</text>
+  <rect x="390" y="655" width="372" height="55" rx="12" fill="url(#good)"/>
+  <text x="805" y="693" class="value">87 ms</text>
+  <text x="130" y="762" class="fine">Warmups excluded · same deterministic prompt · native context recreated per thread profile</text>
+
+  <rect x="1060" y="190" width="460" height="610" rx="30" fill="#141b2a" stroke="#303a52" stroke-width="2"/>
+  <text x="1110" y="275" class="call">+44.4%</text>
+  <text x="1110" y="315" class="label">decode throughput</text>
+  <text x="1110" y="405" class="call">−34.1%</text>
+  <text x="1110" y="445" class="label">median TTFT</text>
+  <text x="1110" y="535" class="call">−62.0%</text>
+  <text x="1110" y="575" class="label">process CPU time</text>
+  <text x="1110" y="607" class="label">per output token</text>
+  <text x="1110" y="690" class="label">11.48 tok/s sustained</text>
+  <text x="1110" y="725" class="sub">102.5% retained · +0.8 °C</text>
+  <text x="1110" y="758" class="fine">No reported thermal throttling</text>
+
+  <text x="80" y="852" class="fine">CPU only · loader-selected Armv8.2 dot-product library · zero GPU layers · no NPU, GPU, or KleidiAI-kernel claim</text>
+</svg>

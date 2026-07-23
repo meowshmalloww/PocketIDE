@@ -1,0 +1,249 @@
+POCKETIDE BENCHMARK REPORT
+Generated: 2026-07-18 17:54:58
+Schema: 9
+
+=== MEASUREMENT INTEGRITY ===
+Chat workload: real loaded-model llama.cpp GGUF generation call
+Native microbenchmark: real llama_decode calls using randomized vocabulary token IDs
+Simulated or estimated performance scores: none
+Warmups excluded from reported statistics: yes
+Decode tok/s timing: after first emitted token
+Model loading and prompt formatting included in TTFT: no
+KV state reset before each measured PTE run: false
+Fixed GGUF prompt may reuse the runtime prefix cache after warmup: true
+GGUF thread profiles: native context reloaded for each load-time n_threads setting
+Native worker-count introspection: unavailable; configured count is labeled separately
+Native prompt test clears KV state between repetitions: true
+PSS label: maximum of start, first-token, and finish samples
+KleidiAI kernel invocation verified: no (runtime exposes no proof)
+Energy scope: public Android whole-device fuel gauge; never presented as app-only power
+
+=== PROTOCOL ===
+Mode: Quick
+Workload: deterministic_code_generation
+Prompt SHA-256: e45811588dbd52c562dac999f1a439543ad452d59c985bedd94ff34fb1e53736
+Requested output: 96 tokens
+Candidate threads: 1, 2, 3, 4
+Screening measured runs/profile: 3
+Confirmation measured runs/profile: 0
+Sustained measured runs: 0
+Sampler: temperature 0.0, seed 42, ignore EOS true
+Backend: llama.cpp / GGUF
+Thread control: llama.cpp context load-time n_threads; native context reloaded between profiles
+
+=== INFERENCE RESOURCE PLAN ===
+Format: GGUF
+Context requested/effective: 4096/1536
+Batch size: 128
+Output requested/cap: 32/64
+Selected threads: 2
+Cold load: false; profile reload: true; allowed: true
+System memory total/available/low threshold: 3629.2 / 1261.3 / 216.0 MB
+Process PSS before plan: 1720.0 MB
+Estimated KV / required headroom: 42.0 / 170.0 MB
+Decision: memory tier up to 4.5 GiB; replacing loaded GGUF thread profile 3 with 2 after releasing the existing native context; context 1536 and batch 128 stay fixed
+
+=== DEVICE ===
+Manufacturer/model: LGE LM-Q620
+SoC: QTI SM6150
+Device/product: mh3 / mh3
+Hardware/board: mh3 / mh3_lao_com
+Android: 12 (API 31)
+ABIs: arm64-v8a, armeabi-v7a, armeabi
+CPU cores: 8
+CPU max-frequency clusters: 6x1709MHz, 2x2016MHz
+App max Java heap: 256.0 MB
+
+=== ARM / RUNTIME EVIDENCE ===
+Architecture: arm64-v8a
+NEON/ASIMD: true
+Dotprod/i8mm/FP16: true/false/true
+SVE/SVE2/SME2: false/false/false
+Engine: llama.cpp via KotlinLlamaCpp 0.4.0
+Loader-selected native library: librnllama_v8_2_dotprod.so
+GGUF GPU layers: 0
+Thread control: n_threads configured when each native context is loaded
+Native-reported live worker count exposed by wrapper: no
+Current GGUF path: CPU; Arm ISA library selected from /proc/cpuinfo
+
+=== MODEL ===
+Name: qwen2.5-coder-1.5b-instruct-q4_0.gguf
+Format: llama.cpp (.gguf)
+Quantization: Q4_0
+File size: 1016.8 MB (1066227264 bytes)
+Architecture: Qwen2.5 Coder 1.5B Instruct GGUF, 1.5B params
+Architecture source: GGUF metadata
+Layers/hidden/KV heads/head dim: 28/1536/2/128
+Model max context: 32768
+
+=== SELECTED CHAT PROFILE ===
+Threads: 2
+Median decode: 11.52 tok/s
+Average TTFT: 101 ms
+Heuristic before calibration: 4 threads
+Saved comparison: 4 threads at 8.23 tok/s (+39.9%)
+Rule: fastest median; within 1%, prefer fewer configured threads then sampled PSS
+Saved for this exact device and model file
+
+=== NATIVE LLAMA.CPP MICROBENCHMARK ===
+Prompt processing (pp128): 48.44 tok/s
+Token generation (tg32): 11.79 tok/s
+Combined: 29.86 tok/s
+Repetitions: 3 plus internal warmup
+Threads generation/batch: 2/2
+Context/batch/microbatch: 1536/128/512
+GPU layers/flash-attention mode: 0/-1
+Scope: kernel throughput only; not TTFT or app UX latency
+
+=== MEASURED CHAT PROFILES ===
+T1 (3 measured; phases {screening=3}):
+  decode median/mean: 8.95 / 8.96 tok/s
+  range/stddev/CV: 8.95-8.97 / 0.01 / 0.1%
+  TTFT median/p95: 117 / 120 ms
+  max sampled PSS mean: 1641.2 MB
+  process CPU/wall median: 1.00x
+T2 (3 measured; phases {screening=3}):
+  decode median/mean: 11.52 / 11.56 tok/s
+  range/stddev/CV: 11.43-11.74 / 0.13 / 1.1%
+  TTFT median/p95: 104 / 105 ms
+  max sampled PSS mean: 1847.6 MB
+  process CPU/wall median: 1.97x
+T3 (3 measured; phases {screening=3}):
+  decode median/mean: 7.54 / 7.57 tok/s
+  range/stddev/CV: 7.50-7.67 / 0.07 / 0.9%
+  TTFT median/p95: 111 / 127 ms
+  max sampled PSS mean: 1784.1 MB
+  process CPU/wall median: 2.78x
+T4 (3 measured; phases {screening=3}):
+  decode median/mean: 8.23 / 8.23 tok/s
+  range/stddev/CV: 8.21-8.26 / 0.02 / 0.2%
+  TTFT median/p95: 131 / 139 ms
+  max sampled PSS mean: 1494.9 MB
+  process CPU/wall median: 3.63x
+
+=== ALL MEASURED RUNS AGGREGATE ===
+Scope: every measured profile; use SELECTED CHAT PROFILE for the applied GGUF result
+Measured/warmup runs: 12/4
+Decode median/mean: 8.60 / 9.08 tok/s
+Decode min/max/stddev/CV: 7.50 / 11.74 / 1.52 / 16.7%
+TTFT median/p90/p95: 116 / 131 / 139 ms
+Generated tokens: 1152
+Measured generation time: 130126 ms
+Battery temperature start/end/delta: 26.5 / 29.5 / 3.0 C
+Final Android thermal status: none
+
+=== DEVICE THERMAL / ENERGY EVIDENCE ===
+Interval/samples: 227442 ms / 19
+Charging observed: false
+Energy source: Android charge counter with sampled voltage
+Measurement quality: multiple fuel-gauge decrements observed
+Fuel-gauge decrease events: 2
+Whole-device energy: 315.6660 mWh
+Energy per generated token: 274.016 uWh/token
+Average whole-device power: 4996.4 mW
+Charge decrease: 79720 uAh
+Current-integration coverage: 100.0%
+Battery level start/end: 98 / 95%
+Battery temperature start/end/delta: 26.5 / 29.5 / 3.0 C
+Maximum Android thermal status: none
+Scope warning: public BatteryManager counters cover the entire phone, not only PocketIDE
+
+=== PER-RUN CHAT RESULTS ===
+#1 T4 screening WARMUP
+  8.19 tok/s | TTFT 1709 ms | 96/96 output tokens
+  total 13304 ms | CPU 48132 ms | sampled PSS 1796.2 MB
+  threads requested/load-configured 4/4 | native live count not exposed
+  prompt 98 estimated
+  battery 98% | temp 26.5 C | thermal none
+#2 T4 screening
+  8.26 tok/s | TTFT 122 ms | 96/96 output tokens
+  total 11626 ms | CPU 42284 ms | sampled PSS 1519.2 MB
+  threads requested/load-configured 4/4 | native live count not exposed
+  prompt 98 estimated
+  battery 98% | temp 26.5 C | thermal none
+#3 T4 screening
+  8.21 tok/s | TTFT 131 ms | 96/96 output tokens
+  total 11698 ms | CPU 42268 ms | sampled PSS 1489.0 MB
+  threads requested/load-configured 4/4 | native live count not exposed
+  prompt 98 estimated
+  battery 98% | temp 26.5 C | thermal none
+#4 T4 screening
+  8.23 tok/s | TTFT 139 ms | 96/96 output tokens
+  total 11681 ms | CPU 42382 ms | sampled PSS 1476.5 MB
+  threads requested/load-configured 4/4 | native live count not exposed
+  prompt 98 estimated
+  battery 98% | temp 26.5 C | thermal none
+#5 T1 screening WARMUP
+  8.78 tok/s | TTFT 2838 ms | 96/96 output tokens
+  total 13661 ms | CPU 13587 ms | sampled PSS 1876.0 MB
+  threads requested/load-configured 1/1 | native live count not exposed
+  prompt 98 estimated
+  battery 98% | temp 26.5 C | thermal none
+#6 T1 screening
+  8.97 tok/s | TTFT 117 ms | 96/96 output tokens
+  total 10703 ms | CPU 10699 ms | sampled PSS 1721.7 MB
+  threads requested/load-configured 1/1 | native live count not exposed
+  prompt 98 estimated
+  battery 98% | temp 26.5 C | thermal none
+#7 T1 screening
+  8.95 tok/s | TTFT 114 ms | 96/96 output tokens
+  total 10732 ms | CPU 10723 ms | sampled PSS 1650.6 MB
+  threads requested/load-configured 1/1 | native live count not exposed
+  prompt 98 estimated
+  battery 98% | temp 26.5 C | thermal none
+#8 T1 screening
+  8.95 tok/s | TTFT 120 ms | 96/96 output tokens
+  total 10737 ms | CPU 10726 ms | sampled PSS 1551.5 MB
+  threads requested/load-configured 1/1 | native live count not exposed
+  prompt 98 estimated
+  battery 97% | temp 28.3 C | thermal none
+#9 T2 screening WARMUP
+  11.75 tok/s | TTFT 1469 ms | 96/96 output tokens
+  total 9555 ms | CPU 18918 ms | sampled PSS 1844.6 MB
+  threads requested/load-configured 2/2 | native live count not exposed
+  prompt 98 estimated
+  battery 97% | temp 28.3 C | thermal none
+#10 T2 screening
+  11.74 tok/s | TTFT 105 ms | 96/96 output tokens
+  total 8199 ms | CPU 16167 ms | sampled PSS 1850.7 MB
+  threads requested/load-configured 2/2 | native live count not exposed
+  prompt 98 estimated
+  battery 97% | temp 28.3 C | thermal none
+#11 T2 screening
+  11.43 tok/s | TTFT 95 ms | 96/96 output tokens
+  total 8406 ms | CPU 16536 ms | sampled PSS 1850.0 MB
+  threads requested/load-configured 2/2 | native live count not exposed
+  prompt 98 estimated
+  battery 97% | temp 28.3 C | thermal none
+#12 T2 screening
+  11.52 tok/s | TTFT 104 ms | 96/96 output tokens
+  total 8353 ms | CPU 16495 ms | sampled PSS 1842.1 MB
+  threads requested/load-configured 2/2 | native live count not exposed
+  prompt 98 estimated
+  battery 97% | temp 28.3 C | thermal none
+#13 T3 screening WARMUP
+  7.63 tok/s | TTFT 2011 ms | 96/96 output tokens
+  total 14466 ms | CPU 40646 ms | sampled PSS 1971.8 MB
+  threads requested/load-configured 3/3 | native live count not exposed
+  prompt 98 estimated
+  battery 97% | temp 28.3 C | thermal none
+#14 T3 screening
+  7.67 tok/s | TTFT 111 ms | 96/96 output tokens
+  total 12498 ms | CPU 34965 ms | sampled PSS 1813.1 MB
+  threads requested/load-configured 3/3 | native live count not exposed
+  prompt 98 estimated
+  battery 96% | temp 29.3 C | thermal none
+#15 T3 screening
+  7.54 tok/s | TTFT 127 ms | 96/96 output tokens
+  total 12722 ms | CPU 35394 ms | sampled PSS 1796.7 MB
+  threads requested/load-configured 3/3 | native live count not exposed
+  prompt 98 estimated
+  battery 96% | temp 29.3 C | thermal none
+#16 T3 screening
+  7.50 tok/s | TTFT 111 ms | 96/96 output tokens
+  total 12771 ms | CPU 35516 ms | sampled PSS 1742.7 MB
+  threads requested/load-configured 3/3 | native live count not exposed
+  prompt 98 estimated
+  battery 95% | temp 29.5 C | thermal none
+
+END OF REPORT

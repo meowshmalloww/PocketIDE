@@ -84,7 +84,12 @@ internal object BenchmarkTextReport {
                 appendLine("Actual worker count/delegate proof exposed by API: no")
             } else {
                 appendLine("Engine: llama.cpp via KotlinLlamaCpp $LLAMA_CPP_WRAPPER_VERSION")
-                appendLine("Loader-selected native library: ${BackendInfo.llamaCppNativeLibrary}")
+                appendLine("Expected loader target: ${BackendInfo.llamaCppNativeLibrary}")
+                appendLine(
+                    "Successfully loaded native library: " +
+                        (data.successfullyLoadedNativeLibrary ?: "not recorded"),
+                )
+                appendLine("Native library load verified: ${data.successfullyLoadedNativeLibrary != null}")
                 appendLine("GGUF GPU layers: ${data.nativeKernelBenchmark?.gpuLayers ?: 0}")
                 appendLine("Thread control: n_threads configured when each native context is loaded")
                 appendLine("Native-reported live worker count exposed by wrapper: no")
@@ -158,13 +163,28 @@ internal object BenchmarkTextReport {
         } else {
             appendLine("Context requested/effective: ${plan.requestedContext}/${plan.effectiveContext}")
         }
+        appendLine("Model/export context limit: ${plan.modelContextLimit}")
         appendLine("Batch size: ${if (plan.batchSize > 0) plan.batchSize else "export controlled"}")
         appendLine("Output requested/cap: ${plan.requestedOutputTokens}/${plan.maxOutputTokens}")
         appendLine("Selected threads: ${plan.selectedThreads}")
+        appendLine("KV cache K/V: ${plan.kvCacheTypeK}/${plan.kvCacheTypeV}; Flash Attention: ${plan.flashAttention}")
         appendLine("Cold load: ${plan.coldLoad}; profile reload: ${plan.profileReload}; allowed: ${plan.allowed}")
         appendLine("System memory total/available/low threshold: ${mb(plan.totalMemoryBytes)} / ${mb(plan.availableMemoryBytes)} / ${mb(plan.lowMemoryThresholdBytes)} MB")
+        appendLine("Android critical low-memory state: ${plan.androidLowMemory}")
         appendLine("Process PSS before plan: ${mb(plan.processPssBytes)} MB")
-        appendLine("Estimated KV / required headroom: ${mb(plan.estimatedKvBytes)} / ${mb(plan.requiredHeadroomBytes)} MB")
+        appendLine(
+            "Estimated native KV / mapped weight working set / required headroom: " +
+                "${mb(plan.estimatedKvBytes)} / ${mb(plan.estimatedWeightWorkingSetBytes)} / " +
+                "${mb(plan.requiredHeadroomBytes)} MB",
+        )
+        appendLine(
+            "Mapped weights / sparse MoE / required total capacity / capacity constrained: " +
+                "${plan.mmapWeights} / ${plan.sparseMoe} / " +
+                "${mb(plan.requiredTotalCapacityBytes)} MB / ${plan.capacityConstrained}",
+        )
+        if (plan.mmapWeights) {
+            appendLine("Memory policy: immediate headroom covers KV and runtime buffers; mapped weights are enforced by the total-capacity guard")
+        }
         appendLine("Decision: ${plan.reason}")
         appendLine()
     }
@@ -336,7 +356,7 @@ internal object BenchmarkTextReport {
         else -> "unknown($status)"
     }
 
-    private const val SCHEMA_VERSION = 9
+    private const val SCHEMA_VERSION = 12
     private const val LLAMA_CPP_WRAPPER_VERSION = "0.4.0"
     private const val EXECUTORCH_VERSION = "1.0.1"
 }

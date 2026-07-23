@@ -16,6 +16,7 @@ class BenchmarkSessionTest {
     fun `export is valid versioned json and warmup is marked`() {
         val session = BenchmarkSession()
         session.setModelInfo("/models/qwen\"demo.gguf", "GGUF", "Q4", 1234)
+        session.setSuccessfullyLoadedNativeLibrary("librnllama_v8_2_dotprod.so")
         session.record(
             result = InferenceBenchmark.BenchmarkResult(
                 ttftMs = 20,
@@ -53,9 +54,14 @@ class BenchmarkSessionTest {
         )
 
         val parsed = JSONObject(session.exportJson())
-        assertEquals(9, parsed.getInt("schema_version"))
+        assertEquals(12, parsed.getInt("schema_version"))
         assertEquals("qwen\"demo.gguf", parsed.getJSONObject("model").getString("name"))
         assertEquals("llama.cpp via KotlinLlamaCpp", parsed.getJSONObject("runtime").getString("engine"))
+        assertEquals(
+            "librnllama_v8_2_dotprod.so",
+            parsed.getJSONObject("runtime").getString("successfully_loaded_native_library"),
+        )
+        assertTrue(parsed.getJSONObject("runtime").getBoolean("native_library_load_verified"))
         assertEquals(1, parsed.getJSONObject("thread_calibration").getInt("selected_threads"))
         val first = parsed.getJSONArray("generations").getJSONObject(0)
         assertEquals(true, first.getBoolean("warmup"))

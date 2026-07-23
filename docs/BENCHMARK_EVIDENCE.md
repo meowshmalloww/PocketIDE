@@ -1,6 +1,6 @@
 # PocketIDE physical device benchmark evidence
 
-This document records the submission headline from completed PocketIDE schema 9 reports captured on July 18, 2026. It separates measured facts, derived metrics, and unsupported acceleration claims.
+This document records the submission headline from completed PocketIDE schema 9 reports captured on July 18, 2026. It separates measured facts, derived metrics, and unsupported acceleration claims. The [exact physical-phone text exports and SHA-256-indexed JSON transcription](benchmarks/README.md) are published beside this summary.
 
 ## Test system
 

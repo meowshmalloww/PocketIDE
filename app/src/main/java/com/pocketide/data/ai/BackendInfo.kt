@@ -2,6 +2,7 @@ package com.pocketide.data.ai
 
 import android.os.Build
 import android.util.Log
+import org.nehuatl.llamacpp.NativeLibrarySelector
 
 /**
  * Detects and reports Arm CPU capabilities relevant to ExecuTorch inference
@@ -116,23 +117,10 @@ object BackendInfo {
      * identify the Arm ISA path that actually backs GGUF inference.
      */
     val llamaCppNativeLibrary: String by lazy {
-        val f = features
-        if (!f.isArm64) {
-            if (Build.SUPPORTED_ABIS.firstOrNull() == "x86_64") {
-                "librnllama_x86_64.so"
-            } else {
-                "librnllama.so"
-            }
-        } else {
-            val armV82Dispatch = f.hasAsimd && f.hasCrc32 && f.hasAes
-            when {
-                armV82Dispatch && f.hasDotprod && f.hasI8mm -> "librnllama_v8_2_dotprod_i8mm.so"
-                armV82Dispatch && f.hasDotprod -> "librnllama_v8_2_dotprod.so"
-                armV82Dispatch && f.hasI8mm -> "librnllama_v8_2_i8mm.so"
-                armV82Dispatch -> "librnllama_v8_2.so"
-                else -> "librnllama_v8.so"
-            }
-        }
+        NativeLibrarySelector.select(
+            primaryAbi = Build.SUPPORTED_ABIS.firstOrNull(),
+            cpuFeatures = cpuFeaturesLine(),
+        ).reportName
     }
 
     /** Human-readable backend summary for logging and UI display. */
@@ -175,15 +163,7 @@ object BackendInfo {
         val abis = Build.SUPPORTED_ABIS
         val isArm64 = abis.any { it.equals("arm64-v8a", ignoreCase = true) }
 
-        val cpuInfo = try {
-            java.io.File("/proc/cpuinfo").readText()
-        } catch (e: Exception) {
-            ""
-        }
-
-        val featuresLine = cpuInfo.lineSequence()
-            .firstOrNull { it.startsWith("Features", ignoreCase = true) }
-            ?.lowercase() ?: ""
+        val featuresLine = cpuFeaturesLine()
 
         val coreCount = Runtime.getRuntime().availableProcessors()
 
@@ -206,4 +186,10 @@ object BackendInfo {
     private fun readLong(file: java.io.File): Long? = runCatching {
         file.readText().trim().toLong()
     }.getOrNull()
+
+    private fun cpuFeaturesLine(): String = runCatching {
+        java.io.File("/proc/cpuinfo").useLines { lines ->
+            lines.firstOrNull { it.startsWith("Features", ignoreCase = true) }.orEmpty().lowercase()
+        }
+    }.getOrDefault("")
 }

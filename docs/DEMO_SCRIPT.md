@@ -1,48 +1,88 @@
-# PocketIDE Demo Script
+# PocketIDE Demo Transcript
 
-Use Code mode with the Qwen GGUF model and Single agent mode for the short recording. Run Quick Benchmark once before recording so PocketIDE saves the fastest measured thread count for this phone and model.
+This script matches the two programs shown in the recorded Devpost demonstration. The improved final edit is 1 minute 47 seconds and places concise evidence cards beside the original physical-phone footage. Use this transcript for captions, the YouTube description, or a new recording if one is needed.
 
-## Before recording
+## What the video demonstrates
 
-1. Close other applications and let the phone cool.
-2. Turn battery saver off.
-3. Confirm that Qwen2.5 Coder 1.5B Q4_0 is active in Settings.
-4. Run Quick Benchmark and keep its Report and JSON.
-5. Unplug the phone, keep screen brightness fixed, run Sustained evidence, and keep its Report and JSON. Do this before recording rather than making judges wait through the suite.
-6. Force close and reopen PocketIDE so the demonstration includes a real cold model load using the saved calibration.
+The Emergency Phone Signal proves that a locally generated Python file can read real phone state and trigger Android actions through PocketIDE's injected `hardware` object. The Emergency Action Menu proves that a generated program can remain active, accept repeated terminal input, choose different code paths, and exit normally.
 
-## Prompt one: interactive calculator
+The examples are deliberately compact. They are reliable enough for a small on device model, easy to verify visually, and demonstrate the complete local workflow instead of only showing an AI chat response. The emergency content is illustrative software output, not certified safety advice.
+
+## Prompt one: Emergency Phone Signal
 
 ```text
-Create one Python file named main.py. Build an interactive calculator that repeatedly asks the user to enter +, minus, multiply, divide, power, or q. For every operation ask for two numbers, validate numeric input, handle division by zero, print the result, and return to the menu. Entering q must print Goodbye and exit. Use input only, use no external packages, and keep the complete program under 50 lines.
+Create phone_signal.py. Do not import anything. PocketIDE provides a global hardware object. Print EMERGENCY PHONE CHECK. In one try except print Battery and hardware.batteryLevel(). In another try except print Network and hardware.networkType(). In separate try except blocks call hardware.vibrate(300) and hardware.toast("Emergency check complete"). On every failure print Unavailable. Keep it under 24 lines. Create runnable code only.
 ```
 
-Run the generated file and enter:
+Visible proof:
+
+* PocketIDE creates `phone_signal.py` locally.
+* Running it prints `EMERGENCY PHONE CHECK`.
+* The terminal shows the phone's battery and network results, or `Unavailable` if an individual call fails.
+* The phone vibrates and displays `Emergency check complete` as an Android toast.
+
+## Prompt two: Emergency Action Menu
 
 ```text
-multiply
-12
-8
+Create main.py. Build an emergency action menu. Repeatedly print 1 FIRE, 2 FLOOD, 3 MEDICAL, and Q QUIT. Read one choice with input. Accept each number or word. For fire print Leave now and call emergency services. For flood print Move to higher ground. For medical print Call emergency services and give first aid if trained. For q print Stay safe and exit. Otherwise print Invalid choice. Use no packages and keep it under 25 lines. Create runnable code only.
+```
+
+Recorded terminal inputs:
+
+```text
+1
+2
 q
 ```
 
-The terminal must show `96` and then `Goodbye`.
+Visible proof:
 
-## Prompt two: Android device health scanner
+* `main.py` keeps running after each choice.
+* Input `1` selects the fire branch.
+* Input `2` selects the flood branch.
+* Input `q` prints `Stay safe` and exits normally.
+
+## Narration transcript
 
 ```text
-Create one Python file named phone_check.py. Build a device health scanner using the PocketIDE hardware object. Read getDeviceInfo, batteryLevel, isCharging, networkType, storageFree, and readSensor with accelerometer for 1000 milliseconds. Give every hardware call its own try except block so a missing sensor cannot stop the program. Print a clear report, vibrate for 200 milliseconds, and show a toast containing Scan complete. Use no external packages and keep the complete program under 45 lines.
+This is an LGE LM Q620 running Android 12 on a Qualcomm SM6150 Arm64 platform. This physical phone is in airplane mode, with no inference server.
+
+PocketIDE runs Qwen2.5 Coder 1.5B Q4_0 locally. The prompt, inference, source code, and execution all remain on the device.
+
+First, the model creates phone_signal.py. The program reads the phone's real battery and network state, then activates vibration and an Android toast through PocketIDE's hardware bridge.
+
+Next, it creates an emergency action menu. The same process stays active while I enter fire, flood, and quit, follows each branch, and exits normally. This proves real interactive terminal execution.
+
+The optimization is measured on this same phone. The Deep benchmark selected two threads and improved decode speed from 8.12 to 11.73 tokens per second, which is 44.4 percent faster. Time to first token dropped from 132 to 87 milliseconds, a 34.1 percent reduction. CPU time per output token fell by 62 percent.
+
+In the sustained test, throughput improved by 40 percent, from 8.20 to 11.48 tokens per second. Temperature rose by only 0.8 degrees Celsius, with no reported thermal throttling.
+
+These are real CPU results using the selected Armv8.2 dot product library. I make no NPU or GPU claim, and the complete reports and JSON are public.
+
+PocketIDE turns an Arm phone into a private coding tool when a laptop, server, or reliable network is unavailable.
 ```
 
-Run the generated file. The script must print the available phone data, finish even if the accelerometer is unavailable, vibrate, and show the `Scan complete` toast.
+## Recommended shot order
 
-## Recording order
+1. Show airplane mode and the active local Qwen model.
+2. Show the Emergency Phone Signal prompt and the real generation.
+3. Open and run `phone_signal.py`. Keep the battery, network, and toast visible long enough to read.
+4. Open and run `main.py`. Enter `1`, `2`, and `q` while the same terminal process remains active.
+5. Show the benchmark Summary, then briefly show the exportable Report and JSON.
+6. Finish on PocketIDE and the public repository address.
 
-1. Show the active local model in Settings.
-2. Turn off network access or state clearly that inference is local.
-3. Generate and run the calculator, including terminal input.
-4. Generate and run the device health scanner.
-5. Open Benchmark and show the saved Summary cards for decode speed, TTFT, selected threads, sustained retention, device energy, temperature, and Arm runtime evidence. Briefly open Report to prove the complete evidence remains available.
-6. End on the editor and terminal, not on a static slide.
+Keep the finished video below three minutes. If generation footage is shortened, label the sped up portion clearly and use footage from the same real on device run. Do not describe either program as a certified emergency or safety tool.
 
-Do not record Swarm mode for the three minute submission. It performs several sequential generations and is better shown in a longer follow up demonstration.
+## Final edited video
+
+The final edit preserves the original narration, generated files, hardware result, and repeated terminal input. It removes only inactive model wait time and an unrelated settings detour. The side panel makes the following facts readable on a desktop display:
+
+* Physical LGE LM Q620 running offline with no inference server
+* Qwen2.5 Coder 1.5B Q4_0 running locally
+* Generated Python reaching battery, network, vibration, and toast APIs
+* One live terminal process accepting repeated input
+* Deep result of 8.12 to 11.73 tok/s and 132 to 87 ms TTFT
+* Sustained result of 11.48 tok/s with a 0.8 C temperature increase and no reported throttling
+* CPU-only scope with no NPU or GPU claim
+
+The final media file is `C:\Users\wenje\Downloads\PocketIDE Video Final.mp4`. Upload that file, not the longer source recording.

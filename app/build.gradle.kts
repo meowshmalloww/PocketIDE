@@ -101,8 +101,9 @@ dependencies {
     // of Qualcomm QNN/NPU execution.
     implementation(libs.executorch.android)
 
-    // On-device LLM inference - llama.cpp (.gguf models, broad model ecosystem)
-    implementation(libs.llamacpp.kotlin)
+    // On-device LLM inference - pinned source fork of KotlinLlamaCpp 0.4.0.
+    // The local binding exposes actual context/cache evidence and Q8 KV cache controls.
+    implementation(project(":third_party:kotlinllamacpp"))
 
     // Embedded HTTP server for localhost web testing
     implementation(libs.nanohttpd)

@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "artifact_type": "repository_index_and_metric_transcription",
+  "native_app_json_export": false,
+  "source": "Exact PocketIDE schema 9 text exports captured on a physical phone",
+  "device": {
+    "manufacturer": "LGE",
+    "model": "LM-Q620",
+    "android": "12",
+    "abi": "arm64-v8a",
+    "platform": "Qualcomm SM6150"
+  },
+  "gguf_model": {
+    "name": "qwen2.5-coder-1.5b-instruct-q4_0.gguf",
+    "bytes": 1066227264,
+    "sha256": "aa8353e0d0fca3a0041828701e90db7635197400f040676d11d7798665fa316e"
+  },
+  "artifacts": [
+    {
+      "backend": "llama.cpp GGUF",
+      "protocol": "Quick",
+      "generated": "2026-07-18 17:54:58",
+      "file": "2026-07-18-lge-lm-q620-gguf-quick-schema9.txt",
+      "sha256": "283da8a7f63cc0746ca458578efa96a03b4038053abee7d796374a8e52f3725e"
+    },
+    {
+      "backend": "ExecuTorch PTE",
+      "protocol": "Quick",
+      "generated": "2026-07-18 17:58:43",
+      "file": "2026-07-18-lge-lm-q620-pte-quick-schema9.txt",
+      "sha256": "2676ca2153e988feda7ab5fc1226ffb3ab4e81b89aece32a71d5eb4f12b54b51"
+    },
+    {
+      "backend": "llama.cpp GGUF",
+      "protocol": "Deep evidence",
+      "generated": "2026-07-18 18:23:13",
+      "file": "2026-07-18-lge-lm-q620-gguf-deep-schema9.txt",
+      "sha256": "29b73b31ef88b85fd9785c246a0631577c4332796c3aa12084c589c3d0b93198"
+    },
+    {
+      "backend": "ExecuTorch PTE",
+      "protocol": "Sustained evidence",
+      "generated": "2026-07-18 19:12:14",
+      "file": "2026-07-18-lge-lm-q620-pte-sustained-schema9.txt",
+      "sha256": "0464a07e1831b0fc598495028c6335ceb2c16abedf450ef5197cd373e7e6de75"
+    },
+    {
+      "backend": "llama.cpp GGUF",
+      "protocol": "Sustained evidence",
+      "generated": "2026-07-18 20:24:08",
+      "file": "2026-07-18-lge-lm-q620-gguf-sustained-schema9.txt",
+      "sha256": "5b103cfd1542427a3e9cda6d857e9bce5adef80e4ae20bcc55a172576ba3928f"
+    }
+  ],
+  "gguf_deep_comparison": {
+    "baseline": {
+      "configured_threads": 4,
+      "median_decode_tokens_per_second": 8.12,
+      "median_ttft_ms": 132,
+      "mean_peak_process_pss_mb": 1780.7,
+      "mean_cpu_ms_per_output_token": 445.6
+    },
+    "selected": {
+      "configured_threads": 2,
+      "median_decode_tokens_per_second": 11.73,
+      "median_ttft_ms": 87,
+      "mean_peak_process_pss_mb": 1915.5,
+      "mean_cpu_ms_per_output_token": 169.4
+    },
+    "decode_improvement_percent": 44.4,
+    "ttft_reduction_percent": 34.1,
+    "cpu_time_per_output_token_reduction_percent": 62.0
+  },
+  "gguf_sustained": {
+    "baseline_four_threads_tokens_per_second": 8.20,
+    "selected_two_threads_tokens_per_second": 11.48,
+    "improvement_percent": 40.0,
+    "throughput_retained_percent": 102.5,
+    "battery_temperature_start_c": 28.1,
+    "battery_temperature_end_c": 28.9,
+    "maximum_android_thermal_status": "none",
+    "whole_device_energy_per_generated_token_uwh": 139.545,
+    "energy_quality": "one fuel-gauge decrement; low-resolution whole-device estimate"
+  },
+  "pte_reference": {
+    "quick_median_decode_tokens_per_second": 11.63,
+    "quick_median_ttft_ms": 2309,
+    "sustained_median_decode_tokens_per_second": 11.08,
+    "sustained_retained_percent": 97.2,
+    "delegate_or_npu_invocation_verified": false
+  },
+  "disclosures": [
+    "Configured GGUF thread count is recorded; the wrapper does not expose a live native worker count.",
+    "The loader selected a CPU library and GPU layers were zero. No NPU, GPU, KleidiAI kernel, or ExecuTorch delegate claim is made without runtime proof.",
+    "TTFT excludes model loading and prompt formatting in this schema 9 protocol.",
+    "Energy values cover the whole phone and are not PocketIDE-only power measurements."
+  ]
+}

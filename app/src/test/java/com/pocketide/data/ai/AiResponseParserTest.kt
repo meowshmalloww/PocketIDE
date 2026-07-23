@@ -261,4 +261,51 @@ class AiResponseParserTest {
         assertTrue(parsed.isTruncated)
         assertEquals("main.js", parsed.filename)
     }
+
+    @Test
+    fun `accepts source after file header when a small model omits fences`() {
+        val parsed = parseAiResponse(
+            """
+            FILE: main.py
+            def greet(name):
+                print("Hello", name)
+            """.trimIndent(),
+        )
+
+        assertFalse(parsed.isTruncated)
+        assertEquals("main.py", parsed.filename)
+        assertEquals("def greet(name):\n    print(\"Hello\", name)", parsed.code)
+    }
+
+    @Test
+    fun `accepts whitespace between fence marker and language`() {
+        val parsed = parseAiResponse(
+            """
+            FILE: app.ts
+            ```   typescript
+            var count: number = 1;
+            ```
+            """.trimIndent(),
+        )
+
+        assertFalse(parsed.isTruncated)
+        assertEquals(Language.TYPESCRIPT, parsed.language)
+        assertEquals("var count: number = 1;", parsed.code)
+    }
+
+    @Test
+    fun `unwraps a model fence placed around both file header and code`() {
+        val parsed = parseAiResponse(
+            """
+            ```
+            FILE: main.py
+            print("ready")
+            ```
+            """.trimIndent(),
+        )
+
+        assertFalse(parsed.isTruncated)
+        assertEquals("main.py", parsed.filename)
+        assertEquals("print(\"ready\")", parsed.code)
+    }
 }

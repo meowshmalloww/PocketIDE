@@ -77,9 +77,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.pocketide.R
 import com.pocketide.data.ai.AiConfig
 import com.pocketide.data.ai.AiConfigRepository
 import com.pocketide.data.ai.ModelDownloader
@@ -359,7 +361,7 @@ private fun SettingsContent(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Context window size",
+                text = stringResource(R.string.settings_requested_context_title),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface,
             )
@@ -376,7 +378,7 @@ private fun SettingsContent(
             )
         }
         Text(
-            text = "Match this to your model's context length. Higher values allow more conversation history and code context but use more memory.",
+            text = stringResource(R.string.settings_context_explanation),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -415,8 +417,8 @@ private fun SettingsContent(
 
         IconToggleRow(
             icon = Icons.Filled.Code,
-            title = "Inject code context",
-            subtitle = "Include snippets of open files in AI prompts for multi-file awareness",
+            title = stringResource(R.string.settings_retrieve_context_title),
+            subtitle = stringResource(R.string.settings_retrieve_context_subtitle),
             checked = aiConfig.enableCodeContext,
             onCheckedChange = { v -> onPersist { it.copy(enableCodeContext = v) } },
         )
@@ -427,6 +429,12 @@ private fun SettingsContent(
             subtitle = "Compress older conversation messages into summaries to save context space",
             checked = aiConfig.enableHistorySummary,
             onCheckedChange = { v -> onPersist { it.copy(enableHistorySummary = v) } },
+        )
+
+        Text(
+            text = stringResource(R.string.settings_retrieval_disclosure),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
     }

@@ -172,6 +172,9 @@ class ExecutorchLlmRunner(
     fun isLoaded(modelPath: String, tokenizerPath: String, temperature: Float): Boolean =
         moduleMatches(modelPath, tokenizerPath, temperature)
 
+    /** True when any PTE module is resident, including a model other than the selected one. */
+    fun hasLoadedModel(): Boolean = module != null
+
     /** Clears the KV cache and resets generation state. */
     override suspend fun resetContext() {
         withContext(dispatcher) {

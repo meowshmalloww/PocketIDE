@@ -4,6 +4,8 @@ PocketIDE is an Android IDE with a fully local AI coding assistant. It can gener
 
 Built for the [Arm AI Optimization Challenge 2026](https://arm-ai-optimization-challenge.devpost.com/) Mobile AI track.
 
+![PocketIDE local Android architecture](docs/assets/architecture.svg)
+
 ## What it does
 
 - Runs GGUF language models locally through llama.cpp; ExecuTorch `.pte` support is also included.
@@ -37,6 +39,8 @@ Before native loading, PocketIDE selects one shared context, batch size, and out
 
 ### Physical-device evidence
 
+![PocketIDE physical Arm phone benchmark comparison](docs/assets/benchmark-comparison.svg)
+
 Schema 9 was measured on an LGE LM-Q620 running Android 12 with Qwen2.5-Coder 1.5B Instruct Q4_0 GGUF. The corrected protocol recreates the native context for every load-configured thread profile and invalidates older calibrations that did not reload the context.
 
 | Metric | Previous 4-thread heuristic | Calibrated 2-thread profile | Change |
@@ -48,7 +52,7 @@ Schema 9 was measured on an LGE LM-Q620 running Android 12 with Qwen2.5-Coder 1.
 
 The CPU-time result is derived from process CPU counters in the same Deep report and is not a battery-energy claim. Decode timing starts after the first emitted token. TTFT excludes model loading and prompt formatting, and the fixed benchmark prompt may reuse the runtime prefix cache after warmup. Thread values are load configured because the wrapper does not expose the native live worker count. The run used the loader-selected `librnllama_v8_2_dotprod.so` CPU library with zero GPU layers; PocketIDE does not claim NPU, GPU, KleidiAI-kernel, or ExecuTorch-delegate acceleration without runtime proof.
 
-The separate Sustained run retained 102.5% of first-half throughput, with the selected profile at 11.48 tok/s versus 8.20 tok/s for four threads. See [the evidence summary and protocol](docs/BENCHMARK_EVIDENCE.md).
+The separate Sustained run retained 102.5% of first-half throughput, with the selected profile at 11.48 tok/s versus 8.20 tok/s for four threads. See [the evidence summary and protocol](docs/BENCHMARK_EVIDENCE.md) and the [exact physical-device reports](docs/benchmarks/README.md).
 
 ## Language support
 
@@ -132,7 +136,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ## Configure a model
 
 1. Copy or download a compatible model onto the phone.
-2. Open **Settings → On-Device Model → Add Model**.
+2. Open **Settings > On-Device Model > Add Model**.
 3. Select the `.gguf` or `.pte` file with Android's document picker.
 4. For `.pte`, also select its tokenizer file.
 5. Select the imported model as active.
@@ -162,6 +166,7 @@ To calibrate inference, open AI Chat, tap the benchmark button, choose **Quick**
 ## Verification
 
 ```bash
+./gradlew verifySubmission
 ./gradlew testDebugUnitTest
 ./gradlew lintDebug
 ./gradlew assembleDebug
@@ -170,14 +175,16 @@ To calibrate inference, open AI Chat, tap the benchmark button, choose **Quick**
 
 Current verification:
 
-- 162 JVM/Robolectric tests passed with no failures or skips
-- 16 Android instrumentation tests passed on the Android emulator, including CPython input and imports, JavaScript, the TypeScript subset, Lua, SQL, Shell, BeanShell Java, terminal input, localhost preview, the Android hardware bridge, benchmark cards, and benchmark cancellation
+- 213 JVM/Robolectric and vendored-runtime tests passed with no failures or skips
+- 19 Android instrumentation tests passed on a clean Android emulator with no failures or skips, including a real Qwen2.5 Coder 1.5B GGUF JNI load, generation, release, and stale-model unmapping test
+- The remaining Android tests cover CPython input and imports, JavaScript, the TypeScript subset, Lua, SQL, Shell, BeanShell Java, terminal input, localhost preview, the Android hardware bridge, benchmark cards, and benchmark cancellation
 - Debug lint completed with 0 errors
-- Debug and release APK assembly passed
+- Debug APK assembly passed for both emulator verification and the final Arm64 artifact workflow
 
 The emulator validates application behavior, not Arm inference speed, power, sensors, or thermal behavior. Those final measurements must be captured on the target physical phone.
 
 Physical-device testing instructions are in [docs/PHYSICAL_DEVICE_TEST_PLAN.md](docs/PHYSICAL_DEVICE_TEST_PLAN.md).
+The exact July 22 verification record is in [docs/VERIFICATION.md](docs/VERIFICATION.md), and the fixed model-quality protocol is in [docs/RELIABILITY_PROTOCOL.md](docs/RELIABILITY_PROTOCOL.md).
 
 The short recording prompts and order are in [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md). Paste ready submission text is in [docs/DEVPOST_SUBMISSION.md](docs/DEVPOST_SUBMISSION.md).
 

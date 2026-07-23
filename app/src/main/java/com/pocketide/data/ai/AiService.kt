@@ -41,6 +41,21 @@ data class BenchmarkRunOptions(
 )
 
 /**
+ * ExecuTorch fixes temperature when [org.pytorch.executorch.extension.llm.LlmModule]
+ * is constructed, while the GGUF runner can override it for each generation.
+ */
+internal fun resolveLoadTemperature(
+    format: ModelFormat,
+    configuredTemperature: Float,
+    isBenchmark: Boolean,
+    deterministicGeneration: Boolean,
+): Float = if (format == ModelFormat.PTE && (isBenchmark || deterministicGeneration)) {
+    0f
+} else {
+    configuredTemperature
+}
+
+/**
  * On-device AI inference service. Routes to the appropriate [LlmRunner]
  * based on the model file extension:
  * - `.pte` → [ExecutorchLlmRunner] (ExecuTorch; acceleration depends on delegates baked into the export)
@@ -71,14 +86,47 @@ class AiService(
     val session: BenchmarkSession get() = benchmarkSession
 
     /** Selects one shared context and memory profile before prompt pruning or native loading. */
-    fun prepareResourcePlan(
+    suspend fun prepareResourcePlan(
         benchmarkOptions: BenchmarkRunOptions? = null,
+        deterministicGeneration: Boolean = false,
     ): InferenceResourcePlan? {
         val appContext = context ?: return null
         val activeModel = config.activeModel ?: return null
+        val temperature = loadTemperature(activeModel.format, benchmarkOptions, deterministicGeneration)
+
+        // The runners are shared while settings can switch models. Release an inactive backend or
+        // stale model before measuring memory; otherwise its old native mapping inflates PSS and
+        // makes every replacement model look impossible to load. This also prevents temporarily
+        // holding a GGUF and a PTE at the same time on a phone.
+        when (activeModel.format) {
+            ModelFormat.GGUF -> {
+                executorchRunner.release()
+                if (llamaCppRunner.hasLoadedModel() &&
+                    !llamaCppRunner.hasLoadedModel(activeModel.modelPath, temperature)
+                ) {
+                    llamaCppRunner.release()
+                }
+            }
+            ModelFormat.PTE -> {
+                llamaCppRunner.release()
+                if (executorchRunner.hasLoadedModel() &&
+                    !executorchRunner.isLoaded(
+                        activeModel.modelPath,
+                        activeModel.tokenizerPath,
+                        temperature,
+                    )
+                ) {
+                    executorchRunner.release()
+                }
+            }
+            ModelFormat.UNKNOWN -> {
+                llamaCppRunner.release()
+                executorchRunner.release()
+            }
+        }
+
         val architecture = configureArchitecture(activeModel)
         val modelFile = java.io.File(activeModel.modelPath)
-        val temperature = loadTemperature(activeModel.format, benchmarkOptions)
         val savedCalibration = if (benchmarkOptions == null && activeModel.format == ModelFormat.GGUF) {
             threadCalibrationRepository?.load(activeModel.modelPath)
         } else {
@@ -117,6 +165,9 @@ class AiService(
             loadedContextLength = loadedGgufProfile?.contextLength,
             loadedBatchSize = loadedGgufProfile?.batchSize,
             loadedThreadCount = loadedGgufProfile?.threadCount,
+            loadedKvCacheTypeK = loadedGgufProfile?.kvCacheTypeK,
+            loadedKvCacheTypeV = loadedGgufProfile?.kvCacheTypeV,
+            loadedFlashAttention = loadedGgufProfile?.flashAttention,
         )
         val plan = InferenceResourcePlanner.plan(baseRequest, snapshot)
         benchmarkSession.setModelInfo(
@@ -143,6 +194,7 @@ class AiService(
         benchmarkOptions: BenchmarkRunOptions? = null,
         resourcePlan: InferenceResourcePlan? = null,
         onPhase: ((InferencePhase) -> Unit)? = null,
+        deterministicGeneration: Boolean = false,
     ): AiResult {
         pipelineLogBuilder = StringBuilder()
         onPhase?.invoke(InferencePhase.PREPARING_PROMPT)
@@ -157,7 +209,7 @@ class AiService(
             ?: return AiResult.Error("No active model selected.")
 
         // Detect model architecture from file name for accurate KV cache estimation.
-        configureArchitecture(activeModel)
+        val architecture = configureArchitecture(activeModel)
 
         // Set model info in benchmark session
         val modelFile = java.io.File(activeModel.modelPath)
@@ -176,7 +228,7 @@ class AiService(
             )
         }
 
-        val plan = resourcePlan ?: prepareResourcePlan(benchmarkOptions)
+        val plan = resourcePlan ?: prepareResourcePlan(benchmarkOptions, deterministicGeneration)
             ?: return AiResult.Error("Could not inspect device memory before model loading.")
         benchmarkSession.setResourcePlan(plan)
         if (!plan.allowed) {
@@ -232,44 +284,74 @@ class AiService(
         when (val load = runner.ensureLoaded(
             modelPath = activeModel.modelPath,
             tokenizerPath = activeModel.tokenizerPath,
-            temperature = loadTemperature(activeModel.format, benchmarkOptions),
+            temperature = loadTemperature(activeModel.format, benchmarkOptions, deterministicGeneration),
             options = LlmRunner.LoadOptions(
                 contextLength = plan.effectiveContext,
                 batchSize = plan.batchSize.takeIf { it > 0 } ?: DEFAULT_BATCH_SIZE,
                 threadCount = tuning.threadCount,
+                kvCacheTypeK = plan.kvCacheTypeK.toGgufKvCacheType(),
+                kvCacheTypeV = plan.kvCacheTypeV.toGgufKvCacheType(),
+                flashAttention = plan.flashAttention,
             ),
         )) {
             is LlmRunner.LoadResult.Success -> Unit
             is LlmRunner.LoadResult.Error -> return AiResult.Error(load.message, plan)
         }
+        benchmarkSession.setSuccessfullyLoadedNativeLibrary(
+            if (activeModel.format == ModelFormat.GGUF) llamaCppRunner.loadedNativeLibraryName() else null,
+        )
 
-        // ExecuTorch keeps a KV context between calls. Reset it before every
-        // measured PTE generation so runs are independent and memory does not
-        // accumulate across a benchmark suite.
-        if (benchmarkOptions != null && activeModel.format == ModelFormat.PTE) {
+        // ExecuTorch keeps prefilled tokens in its KV context. PocketIDE formats the complete
+        // conversation into every request, so carrying that native context into the next call
+        // duplicates the prompt and can make a second request stall or overflow its exported
+        // sequence bound. Reset before every independent PTE generation. Benchmark calls remain
+        // independent for the same reason.
+        if (activeModel.format == ModelFormat.PTE) {
             runner.resetContext()
+            logPipeline("[0] ExecuTorch context reset before independent generation")
         }
 
-        var effectiveSeqLen = tuning.seqLen
-
-        // Step 2: KV cache memory check
-        val kvDecision = kvCacheManager.checkMemory(effectiveSeqLen, context)
-        when (kvDecision) {
-            is KvCacheManager.KvCacheDecision.Proceed ->
-                logPipeline("[2] KV cache: OK (${"%.1f".format(kvDecision.estimatedKvCacheMb)}MB estimated)")
-            is KvCacheManager.KvCacheDecision.ReduceSeqLen -> {
-                effectiveSeqLen = kvDecision.newSeqLen
-                logPipeline("[2] KV cache: REDUCED seqLen to ${kvDecision.newSeqLen} (${kvDecision.reason})")
-            }
-            is KvCacheManager.KvCacheDecision.ResetContext -> {
-                runner.resetContext()
-                kvCacheManager.reset()
-                effectiveSeqLen = effectiveSeqLen.coerceAtMost(256)
-                logPipeline("[2] KV cache: RESET (${kvDecision.reason})")
-            }
+        val exactPromptTokens = if (activeModel.format == ModelFormat.GGUF) {
+            llamaCppRunner.tokenize(prompt)
+        } else {
+            null
         }
-        logPipeline("[2] KV cache estimate: ${kvCacheManager.currentBytesPerElement()} " +
-            "bytes/element (native precision is controlled by the model/runtime)")
+        val promptTokensForContext = exactPromptTokens ?: promptTokenEstimate
+        val contextOutputCapacity = plan.effectiveContext - promptTokensForContext - CONTEXT_SAFETY_TOKENS
+        if (contextOutputCapacity < MIN_GENERATION_TOKENS) {
+            return AiResult.Error(
+                "The prompt uses $promptTokensForContext of ${plan.effectiveContext} context tokens, " +
+                    "leaving too little room to generate a complete answer. Start a new chat or shorten the request.",
+                plan,
+            )
+        }
+        var effectiveSeqLen = tuning.seqLen.coerceAtMost(contextOutputCapacity)
+        if (effectiveSeqLen < tuning.seqLen) {
+            logPipeline(
+                "[1] Output reduced from ${tuning.seqLen} to $effectiveSeqLen tokens to fit the " +
+                    "${plan.effectiveContext}-token context after the " +
+                    "${if (exactPromptTokens != null) "exact" else "estimated"} prompt count.",
+            )
+        }
+
+        // The resource planner uses Android system memory and the complete native context
+        // allocation. Java heap is not a valid limit for llama.cpp native KV memory, and checking
+        // only n_predict here previously undercounted the cache. Keep one authoritative decision.
+        kvCacheManager = KvCacheManager.forArchitecture(
+            architecture,
+            bytesPerElement = when {
+                plan.kvCacheQuantized -> 1
+                activeModel.format == ModelFormat.PTE &&
+                    architecture.exportedKvBytesPerElement != null ->
+                    architecture.exportedKvBytesPerElement
+                else -> 2
+            } ?: 2,
+        )
+        logPipeline(
+            "[2] KV cache: ${plan.kvCacheTypeK}/${plan.kvCacheTypeV}, " +
+                "flash=${plan.flashAttention}, estimated=${"%.1f".format(plan.estimatedKvBytes / MIB)}MB " +
+                "for ${plan.effectiveContext} native context tokens",
+        )
 
         val runnerSequenceLength = if (activeModel.format == ModelFormat.PTE) {
             // ExecuTorch 1.0's generate(prompt, seqLen, ...) treats seqLen as
@@ -281,7 +363,8 @@ class AiService(
         } else {
             effectiveSeqLen
         }
-        logPipeline("[3] Prompt: ${prompt.length} chars, ~${promptTokenEstimate} tokens, " +
+        logPipeline("[3] Prompt: ${prompt.length} chars, " +
+            "${exactPromptTokens?.let { "$it exact" } ?: "~$promptTokenEstimate estimated"} tokens, " +
             "requestedOutput=$effectiveSeqLen, runnerSeqLen=$runnerSequenceLength, " +
             "requestedThreads=${tuning.threadCount}")
 
@@ -304,9 +387,9 @@ class AiService(
             runnerSequenceLength,
             sink,
             options = LlmRunner.GenerationOptions(
-                deterministic = benchmarkOptions != null,
+                deterministic = benchmarkOptions != null || deterministicGeneration,
                 ignoreEos = benchmarkOptions != null,
-                seed = if (benchmarkOptions != null) 42 else -1,
+                seed = if (benchmarkOptions != null) 42 else if (deterministicGeneration) 0 else -1,
                 maxOutputTokens = effectiveSeqLen.takeIf { activeModel.format == ModelFormat.PTE },
             ),
         )
@@ -318,8 +401,13 @@ class AiService(
         benchmarkSession.record(
             result = benchResult,
             tuning = tuning,
-            kvCacheQuantized = kvCacheManager.isKvCacheQuantized(),
-            kvCacheBytesPerElement = kvCacheManager.currentBytesPerElement(),
+            kvCacheQuantized = plan.kvCacheQuantized,
+            kvCacheBytesPerElement = when {
+                plan.kvCacheQuantized -> 1
+                architecture.exportedKvBytesPerElement != null ->
+                    architecture.exportedKvBytesPerElement
+                else -> 2
+            } ?: 2,
             promptTokenEstimate = successfulGeneration?.promptTokenCount ?: promptTokenEstimate,
             promptTokensExact = successfulGeneration?.promptTokenCount != null,
             configuredThreadCount = successfulGeneration?.configuredThreadCount
@@ -384,6 +472,9 @@ class AiService(
                 contextLength = plan.effectiveContext,
                 batchSize = plan.batchSize,
                 threadCount = threadCount.coerceIn(1, Runtime.getRuntime().availableProcessors()),
+                kvCacheTypeK = plan.kvCacheTypeK.toGgufKvCacheType(),
+                kvCacheTypeV = plan.kvCacheTypeV.toGgufKvCacheType(),
+                flashAttention = plan.flashAttention,
             ),
         )
         if (loadResult is LlmRunner.LoadResult.Error) {
@@ -416,7 +507,13 @@ class AiService(
     private fun loadTemperature(
         format: ModelFormat,
         benchmarkOptions: BenchmarkRunOptions?,
-    ): Float = if (benchmarkOptions != null && format == ModelFormat.PTE) 0f else config.temperature
+        deterministicGeneration: Boolean = false,
+    ): Float = resolveLoadTemperature(
+        format = format,
+        configuredTemperature = config.temperature,
+        isBenchmark = benchmarkOptions != null,
+        deterministicGeneration = deterministicGeneration,
+    )
 
     private fun logPipeline(msg: String) {
         pipelineLogBuilder.appendLine(msg)
@@ -439,6 +536,13 @@ class AiService(
         private const val TAG = "AiService"
         private const val MIN_PTE_SEQUENCE_LENGTH = 128
         private const val PTE_PROMPT_ESTIMATE_HEADROOM = 16
+        private const val CONTEXT_SAFETY_TOKENS = 24
+        private const val MIN_GENERATION_TOKENS = 64
         private const val DEFAULT_BATCH_SIZE = 512
+        private const val MIB = 1024.0 * 1024.0
     }
 }
+
+private fun String.toGgufKvCacheType(): GgufKvCacheType =
+    GgufKvCacheType.entries.firstOrNull { it.nativeName.equals(this, ignoreCase = true) }
+        ?: GgufKvCacheType.F16

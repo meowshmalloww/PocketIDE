@@ -164,13 +164,21 @@ internal object BenchmarkDashboardFactory {
             armRuntimeEvidence = if (isPte) {
                 "Arm64 ${features.isArm64} | ExecuTorch PTE | delegate and KleidiAI invocation not exposed"
             } else {
-                "${BackendInfo.llamaCppNativeLibrary} | dotprod ${features.hasDotprod} | i8mm ${features.hasI8mm} | SME2 ${features.hasSme2}"
+                "${data.successfullyLoadedNativeLibrary ?: "native library not recorded"} | " +
+                    "load verified ${data.successfullyLoadedNativeLibrary != null} | " +
+                    "dotprod ${features.hasDotprod} | i8mm ${features.hasI8mm} | SME2 ${features.hasSme2}"
             },
             resourcePlanEvidence = resourcePlan?.let {
                 if (isPte) {
-                    "PTE context and batch export controlled | output cap ${it.maxOutputTokens} | headroom ${fmt(it.requiredHeadroomBytes / MIB, 0)} MB"
+                    "PTE context ${it.effectiveContext}/${it.modelContextLimit} export controlled | " +
+                        "output cap ${it.maxOutputTokens} | headroom ${fmt(it.requiredHeadroomBytes / MIB, 0)} MB"
                 } else {
-                    "Context ${it.effectiveContext} | batch ${it.batchSize} | output cap ${it.maxOutputTokens} | headroom ${fmt(it.requiredHeadroomBytes / MIB, 0)} MB"
+                    "Context ${it.effectiveContext}/${it.modelContextLimit} | KV ${it.kvCacheTypeK}/${it.kvCacheTypeV} | " +
+                        "Flash ${it.flashAttention} | ${fmt(it.estimatedKvBytes / MIB, 0)} MB KV | " +
+                        "${if (it.sparseMoe) "sparse MoE" else "dense"} mmap | " +
+                        "${fmt(it.estimatedWeightWorkingSetBytes / MIB, 0)} MB weight working set | " +
+                        "${fmt(it.requiredHeadroomBytes / MIB, 0)} MB KV/runtime headroom | " +
+                        "total guard ${fmt(it.requiredTotalCapacityBytes / MIB, 0)} MB"
                 }
             } ?: "Resource plan unavailable",
             integrityNote = if (isPte) {

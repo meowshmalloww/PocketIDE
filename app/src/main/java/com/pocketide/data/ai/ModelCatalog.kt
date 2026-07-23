@@ -52,6 +52,40 @@ object ModelCatalog {
         ),
     )
 
+    val qwenCoder3b = ModelCatalogEntry(
+        id = "qwen25_coder_3b_q4_0",
+        displayName = "Qwen2.5-Coder 3B Q4_0 smaller",
+        description = "Smaller legacy 3B Q4_0 GGUF for higher-memory phones; loading is preflighted on the device.",
+        sourceUrl = "https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF",
+        licenseLabel = "Qwen Research License",
+        promptTemplate = PromptTemplate.QWEN,
+        modelAsset = ModelCatalogAsset(
+            id = "model",
+            remoteFileName = "qwen2.5-coder-3b-instruct-q4_0.gguf",
+            localFileName = "qwen2.5-coder-3b-instruct-q4_0.gguf",
+            downloadUrl = "https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/qwen2.5-coder-3b-instruct-q4_0.gguf?download=true",
+            expectedBytes = 1_997_879_744L,
+            sha256 = "282085f05511706c7b59b32ccabfc452f214771076298c29183e595c576417e0",
+        ),
+    )
+
+    val qwenCoder3bQuality = ModelCatalogEntry(
+        id = "qwen25_coder_3b_q4_k_m",
+        displayName = "Qwen2.5-Coder 3B Q4_K_M quality",
+        description = "Balanced-quality 3B GGUF for higher-memory phones; loading is preflighted on the device.",
+        sourceUrl = "https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF",
+        licenseLabel = "Qwen Research License",
+        promptTemplate = PromptTemplate.QWEN,
+        modelAsset = ModelCatalogAsset(
+            id = "model",
+            remoteFileName = "qwen2.5-coder-3b-instruct-q4_k_m.gguf",
+            localFileName = "qwen2.5-coder-3b-instruct-q4_k_m.gguf",
+            downloadUrl = "https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/qwen2.5-coder-3b-instruct-q4_k_m.gguf?download=true",
+            expectedBytes = 2_104_932_800L,
+            sha256 = "724fb256bec1ff062b2f65e4569e871ad2e95ab2a3989723d1769c54294730b7",
+        ),
+    )
+
     val llamaSpinQuant = ModelCatalogEntry(
         id = "llama32_1b_spinquant_int4",
         displayName = "Llama 3.2 1B SpinQuant INT4",
@@ -77,7 +111,8 @@ object ModelCatalog {
         ),
     )
 
-    val entries: List<ModelCatalogEntry> = listOf(qwenCoder, llamaSpinQuant)
+    val entries: List<ModelCatalogEntry> =
+        listOf(qwenCoder, qwenCoder3bQuality, qwenCoder3b, llamaSpinQuant)
 
     fun find(id: String): ModelCatalogEntry? = entries.firstOrNull { it.id == id }
 }

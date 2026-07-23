@@ -52,6 +52,44 @@ class GgufMetadataReaderTest {
         }
     }
 
+    @Test
+    fun `PowerMoE metadata keeps the official four thousand token limit`() {
+        val file = File.createTempFile("PowerMoE-3b-Q4_K_S", ".gguf")
+        try {
+            file.writeBytes(
+                gguf(
+                    "general.architecture" to stringValue("granitemoe"),
+                    "general.name" to stringValue("PowerMoE-3B"),
+                    "general.size_label" to stringValue("3B"),
+                    "granitemoe.context_length" to uint32Value(4_096),
+                    "granitemoe.embedding_length" to uint32Value(1_536),
+                    "granitemoe.block_count" to uint32Value(32),
+                    "granitemoe.expert_count" to uint32Value(40),
+                    "granitemoe.expert_used_count" to uint32Value(8),
+                    "granitemoe.attention.head_count" to uint32Value(24),
+                    "granitemoe.attention.head_count_kv" to uint32Value(8),
+                    "granitemoe.attention.key_length" to uint32Value(64),
+                ),
+            )
+
+            val architecture = ModelSpec.detect(file.absolutePath)
+
+            assertEquals("GGUF metadata", architecture.source)
+            assertEquals("PowerMoE-3B", architecture.displayName)
+            assertEquals(3.0f, architecture.paramCountBillion)
+            assertEquals(4_096, architecture.maxContextLength)
+            assertEquals(32, architecture.numLayers)
+            assertEquals(8, architecture.numKvHeads)
+            assertEquals(64, architecture.headDim)
+            assertEquals("granitemoe", architecture.architectureId)
+            assertEquals(40, architecture.expertCount)
+            assertEquals(8, architecture.expertUsedCount)
+            assertEquals(true, architecture.isMixtureOfExperts)
+        } finally {
+            file.delete()
+        }
+    }
+
     private fun gguf(vararg entries: Pair<String, EncodedValue>): ByteArray =
         ByteArrayOutputStream().apply {
             write(byteArrayOf(0x47, 0x47, 0x55, 0x46))

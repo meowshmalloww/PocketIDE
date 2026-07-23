@@ -1,11 +1,18 @@
 <resources>
     <string name="app_name">PocketIDE</string>
     <string name="model_catalog_title">Verified one-tap models</string>
-    <string name="model_catalog_explanation">Downloads continue in the background, are SHA-256 verified, and are selected automatically. Keep at least 1.5 GB free.</string>
+    <string name="model_catalog_explanation">Downloads continue in the background, are SHA-256 verified, and are selected automatically. Memory preflight can refuse a model that is unsafe for this phone.</string>
     <string name="model_catalog_qwen_description">Coding-focused GGUF for PocketIDE\'s llama.cpp backend.</string>
+    <string name="model_catalog_qwen_3b_description">Smaller legacy 3B Q4_0 coding GGUF for higher-memory phones. PocketIDE checks this device before loading.</string>
+    <string name="model_catalog_qwen_3b_quality_description">Recommended balanced-quality Q4_K_M 3B coding GGUF for higher-memory phones. PocketIDE checks this device before loading.</string>
     <string name="model_catalog_llama_description">Arm-optimized ExecuTorch PTE with its required tokenizer.</string>
     <string name="model_catalog_metadata">%1$s • %2$s</string>
     <string name="model_catalog_progress">%1$s / %2$s (%3$d%%)</string>
+    <string name="settings_requested_context_title">Requested native context</string>
+    <string name="settings_context_explanation">GGUF is capped by model metadata, device RAM, and a real KV cache preflight. Above 4K, PocketIDE uses Q8 KV with Flash Attention. PTE limits remain fixed by the exported file. A 65K or 131K selection is never treated as proof that a model or phone supports it.</string>
+    <string name="settings_retrieve_context_title">Retrieve project context</string>
+    <string name="settings_retrieve_context_subtitle">Scan all project files locally and inject query relevant code chunks that fit the true native context</string>
+    <string name="settings_retrieval_disclosure">Large project memory is indexed retrieval, not hidden transformer context. The retrieved prompt labels indexed source size separately from the active model window.</string>
     <string name="model_catalog_view_source">View source</string>
     <string name="model_catalog_status_available">Ready to download</string>
     <string name="model_catalog_status_queued">Queued</string>

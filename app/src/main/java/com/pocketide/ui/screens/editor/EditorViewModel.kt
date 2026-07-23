@@ -16,6 +16,10 @@ import com.pocketide.data.ai.BenchmarkPowerSampler
 import com.pocketide.data.ai.BenchmarkProtocol
 import com.pocketide.data.ai.BenchmarkRunOptions
 import com.pocketide.data.ai.ChatTurn
+import com.pocketide.data.ai.CodeFileAttempt
+import com.pocketide.data.ai.CodeGenerationPipeline
+import com.pocketide.data.ai.CodeModelReply
+import com.pocketide.data.ai.CodeProjectGenerationResult
 import com.pocketide.data.ai.ContextManager
 import com.pocketide.data.ai.ExecutorchLlmRunner
 import com.pocketide.data.ai.InferencePhase
@@ -24,6 +28,7 @@ import com.pocketide.data.ai.LlamaCppRunner
 import com.pocketide.data.ai.ModelFormat
 import com.pocketide.data.ai.PreviousProcessExit
 import com.pocketide.data.ai.ProcessExitDiagnostics
+import com.pocketide.data.ai.ParsedAiFile
 import com.pocketide.data.ai.ThreadCalibrationRepository
 import com.pocketide.data.ai.ThreadProfileSample
 import com.pocketide.data.ai.ThreadProfileSelector
@@ -392,7 +397,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun getService(config: com.pocketide.data.ai.AiConfig): AiService {
         val hash = config.hashCode()
-        if (cachedService != null && hash == cachedConfigHash) return cachedService!!
+        cachedService?.takeIf { hash == cachedConfigHash }?.let { return it }
         val service = AiService(executorchRunner, llamaCppRunner, config, getApplication())
         service.session.setPreviousProcessExit(recoveredProcessExit)
         cachedService = service
@@ -950,7 +955,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 val config = aiConfigRepository.load()
                 val service = getService(config)
-                val resourcePlan = service.prepareResourcePlan()
+                val resourcePlan = service.prepareResourcePlan(
+                    deterministicGeneration = currentMode == AiMode.CODE,
+                )
                 if (resourcePlan == null) {
                     showGenerationFailure("No configured model is available for memory planning.")
                     return@launch
@@ -959,6 +966,20 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     showGenerationFailure(resourcePlan.blockingMessage())
                     return@launch
                 }
+
+                // A phone-safe completion can be much shorter than a multi-file project. Give
+                // every requested file its own clean generation budget so one cut-off fence can
+                // never discard all of the model's work.
+                if (currentMode == AiMode.CODE && currentModelMode == ModelMode.SINGLE) {
+                    runSingleModelCodePipeline(
+                        service = service,
+                        config = config,
+                        resourcePlan = resourcePlan,
+                        request = prompt,
+                    )
+                    return@launch
+                }
+
                 val systemPrompt = when (currentMode) {
                     AiMode.CODE -> if (currentModelMode == ModelMode.SWARM) {
                         ARCHITECT_SYSTEM_PROMPT
@@ -976,6 +997,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     userMessage = prompt,
                     files = _state.value.files,
                     contextWindowSize = resourcePlan.effectiveContext,
+                    responseTokenBudget = resourcePlan.maxOutputTokens,
                     activeFileIndex = _state.value.activeFileIndex,
                     enableCodeContext = config.enableCodeContext,
                     enableHistorySummary = config.enableHistorySummary,
@@ -990,6 +1012,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     resourcePlan = resourcePlan,
                     onPhase = ::updateInferencePhase,
                     onToken = { _ -> tokenCount++ },
+                    deterministicGeneration = currentMode == AiMode.CODE,
                 )
 
                 val elapsedSec = (System.currentTimeMillis() - startTime) / 1000f
@@ -1126,8 +1149,157 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** Reliable single-model Code mode for small output budgets on memory-constrained phones. */
+    private suspend fun runSingleModelCodePipeline(
+        service: AiService,
+        config: com.pocketide.data.ai.AiConfig,
+        resourcePlan: InferenceResourcePlan,
+        request: String,
+    ) {
+        val snapshot = _state.value
+        val activeFile = snapshot.files.getOrNull(snapshot.activeFileIndex)
+        val targets = CodeGenerationPipeline.resolveTargets(request, activeFile)
+        val targetNames = targets.map { it.filename.lowercase() }.toSet()
+        val existingProjectFiles = snapshot.files.filter { it.name.lowercase() in targetNames }
+
+        _state.update {
+            it.copy(
+                architectStatus = AgentStatus.DONE,
+                coderStatus = AgentStatus.GENERATING,
+                isThinking = true,
+                inferencePhase = InferencePhase.PREPARING_PROMPT,
+            )
+        }
+
+        var latestTtftMs: Long? = null
+        var latestMemoryDeltaMb: Float? = null
+        var latestStrategy: String? = null
+        var latestPipelineLog: String? = null
+
+        val outcome = CodeGenerationPipeline.generateProject(
+            originalRequest = request,
+            targets = targets,
+            outputTokenLimit = resourcePlan.maxOutputTokens,
+            // Reuse the user's bounded repair preference. More retries add heat and do not
+            // reliably improve a weak local model forever, so keep the local loop finite.
+            maxAttempts = config.maxRepairIterations.coerceIn(1, 4),
+        ) { attempt ->
+            _state.update {
+                it.copy(
+                    coderStatus = AgentStatus.GENERATING,
+                    isThinking = true,
+                    inferencePhase = InferencePhase.PREPARING_PROMPT,
+                )
+            }
+
+            val contextFiles = buildGenerationContextFiles(
+                existingFiles = if (config.enableCodeContext) existingProjectFiles else emptyList(),
+                attempt = attempt,
+            )
+            val activeContextIndex = contextFiles.indexOfFirst {
+                it.name.equals(attempt.target.filename, ignoreCase = true)
+            }.takeIf { it >= 0 } ?: contextFiles.lastIndex.coerceAtLeast(0)
+            val managed = ContextManager.buildContext(
+                systemPrompt = CodeGenerationPipeline.systemPrompt(attempt),
+                history = emptyList(),
+                userMessage = CodeGenerationPipeline.userPrompt(attempt),
+                files = contextFiles,
+                contextWindowSize = resourcePlan.effectiveContext,
+                responseTokenBudget = resourcePlan.maxOutputTokens,
+                activeFileIndex = activeContextIndex,
+                // Completed siblings are required to keep imports and element IDs consistent,
+                // even when optional conversation code context is disabled in Settings.
+                enableCodeContext = contextFiles.isNotEmpty(),
+                enableHistorySummary = false,
+            )
+
+            val startedAt = System.currentTimeMillis()
+            var streamedTokens = 0
+            when (val result = service.chatCompletion(
+                systemPrompt = managed.systemPrompt,
+                history = managed.history,
+                userMessage = managed.userMessage,
+                resourcePlan = resourcePlan,
+                onPhase = ::updateInferencePhase,
+                onToken = { _ -> streamedTokens++ },
+                deterministicGeneration = true,
+            )) {
+                is AiResult.Error -> CodeModelReply.Error(result.message)
+                is AiResult.Success -> {
+                    val elapsedSeconds = (System.currentTimeMillis() - startedAt) / 1000f
+                    val callbackTps = if (elapsedSeconds > 0f) streamedTokens / elapsedSeconds else null
+                    val measuredTps = result.benchmark?.tokensPerSecond?.takeIf { it > 0f } ?: callbackTps
+                    latestTtftMs = result.benchmark?.ttftMs?.takeIf { it >= 0 }
+                    latestMemoryDeltaMb = result.benchmark?.let {
+                        it.memoryDeltaBytes / (1024f * 1024f)
+                    }
+                    latestStrategy = result.tuning?.strategy?.displayName
+                    latestPipelineLog = result.pipelineLog
+                    val generatedTokens = result.benchmark?.tokenCount ?: streamedTokens
+                    val attemptedOutputTokens = result.tuning?.seqLen ?: resourcePlan.maxOutputTokens
+                    CodeModelReply.Success(
+                        content = result.content,
+                        tokensPerSecond = measuredTps,
+                        hitOutputLimit = generatedTokens >= attemptedOutputTokens,
+                    )
+                }
+            }
+        }
+
+        when (outcome) {
+            is CodeProjectGenerationResult.Error -> {
+                _state.update {
+                    it.copy(
+                        messages = it.messages + ChatMessage(
+                            role = MessageRole.CODER,
+                            content = outcome.message,
+                            agentStatus = AgentStatus.ERROR,
+                        ),
+                        architectStatus = AgentStatus.DONE,
+                        coderStatus = AgentStatus.ERROR,
+                        isGenerating = false,
+                        isThinking = false,
+                        inferencePhase = InferencePhase.FAILED,
+                    )
+                }
+            }
+            is CodeProjectGenerationResult.Success -> {
+                applyGeneratedFiles(
+                    plan = outcome.plan + " Generated ${outcome.files.size} complete file(s) " +
+                        "in ${outcome.totalModelCalls} bounded local generation(s).",
+                    generatedFiles = outcome.files,
+                    tokensPerSecond = outcome.averageTokensPerSecond,
+                )
+                _state.update {
+                    it.copy(
+                        lastTtftMs = latestTtftMs,
+                        lastMemoryDeltaMb = latestMemoryDeltaMb,
+                        lastStrategy = latestStrategy,
+                        lastPipelineLog = latestPipelineLog,
+                    )
+                }
+            }
+        }
+    }
+
+    private fun buildGenerationContextFiles(
+        existingFiles: List<CodeFile>,
+        attempt: CodeFileAttempt,
+    ): List<CodeFile> {
+        val merged = linkedMapOf<String, CodeFile>()
+        existingFiles.forEach { file -> merged[file.name.lowercase()] = file }
+        attempt.completedFiles.forEach { generated ->
+            merged[generated.filename.lowercase()] = CodeFile(
+                name = generated.filename,
+                language = generated.language,
+                content = generated.code,
+            )
+        }
+        return merged.values.toList()
+    }
+
     /**
-     * SWARM pipeline: Architect (plan) → Coder (generate) → Validator (auto-repair loop).
+     * SWARM pipeline: Architect plan, Coder generation, then Validator repair.
      * The initial AI response is treated as the Architect's plan. The Coder then
      * generates code from that plan. If execution fails, the Validator repairs
      * automatically up to [AiConfig.maxRepairIterations] times.
@@ -1168,6 +1340,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             userMessage = coderUserMessage,
             files = _state.value.files,
             contextWindowSize = resourcePlan.effectiveContext,
+            responseTokenBudget = resourcePlan.maxOutputTokens,
             activeFileIndex = _state.value.activeFileIndex,
             enableCodeContext = config.enableCodeContext,
             enableHistorySummary = config.enableHistorySummary,
@@ -1182,6 +1355,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             resourcePlan = resourcePlan,
             onPhase = ::updateInferencePhase,
             onToken = { _ -> coderTokens++ },
+            deterministicGeneration = true,
         )
         val callbackCoderTps = ((System.currentTimeMillis() - coderStart) / 1000f).let { el ->
             if (el > 0f) coderTokens / el else null
@@ -1308,6 +1482,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 userMessage = repairPrompt,
                 files = _state.value.files,
                 contextWindowSize = resourcePlan.effectiveContext,
+                responseTokenBudget = resourcePlan.maxOutputTokens,
                 activeFileIndex = _state.value.activeFileIndex,
                 enableCodeContext = config.enableCodeContext,
                 enableHistorySummary = config.enableHistorySummary,
@@ -1319,6 +1494,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 userMessage = repairManaged.userMessage,
                 resourcePlan = resourcePlan,
                 onPhase = ::updateInferencePhase,
+                deterministicGeneration = true,
             )
 
             when (repairResult) {
@@ -1430,20 +1606,6 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             return false
         }
 
-        _state.update {
-            it.copy(
-                messages = it.messages + ChatMessage(
-                    role = MessageRole.ARCHITECT,
-                    content = parsed.plan ?: rawContent,
-                    agentStatus = AgentStatus.DONE,
-                    tokensPerSecond = tokensPerSecond,
-                ),
-                architectStatus = AgentStatus.DONE,
-                coderStatus = if (parsed.code != null) AgentStatus.GENERATING else AgentStatus.IDLE,
-                isThinking = false,
-            )
-        }
-
         val generatedFiles = parsed.files.ifEmpty {
             val code = parsed.code
             val language = parsed.language
@@ -1458,6 +1620,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (generatedFiles.isEmpty()) {
             _state.update {
                 it.copy(
+                    messages = it.messages + ChatMessage(
+                        role = MessageRole.CODER,
+                        content = rawContent + "\n\nNo complete supported file was found in the model response.",
+                        agentStatus = AgentStatus.ERROR,
+                        tokensPerSecond = tokensPerSecond,
+                    ),
+                    coderStatus = AgentStatus.ERROR,
                     isGenerating = false,
                     isThinking = false,
                     inferencePhase = InferencePhase.FAILED,
@@ -1466,11 +1635,27 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             return false
         }
 
+        return applyGeneratedFiles(
+            plan = parsed.plan ?: "Apply the complete generated file${if (generatedFiles.size == 1) "" else "s"}.",
+            generatedFiles = generatedFiles,
+            tokensPerSecond = tokensPerSecond,
+        )
+    }
+
+    private fun applyGeneratedFiles(
+        plan: String,
+        generatedFiles: List<ParsedAiFile>,
+        tokensPerSecond: Float?,
+    ): Boolean {
+        if (generatedFiles.isEmpty()) return false
+        _state.update { it.copy(inferencePhase = InferencePhase.APPLYING_FILES, isThinking = false) }
         val s = _state.value
         val newFiles = s.files.toMutableList()
         var targetIndex = s.activeFileIndex.coerceIn(0, newFiles.lastIndex.coerceAtLeast(0))
         generatedFiles.forEach { generated ->
-            val existingIndex = newFiles.indexOfFirst { it.name == generated.filename }
+            val existingIndex = newFiles.indexOfFirst {
+                it.name.equals(generated.filename, ignoreCase = true)
+            }
             if (existingIndex >= 0) {
                 newFiles[existingIndex] = newFiles[existingIndex].copy(
                     language = generated.language,
@@ -1497,12 +1682,21 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
         _state.update {
             it.copy(
-                messages = it.messages + ChatMessage(
-                    role = MessageRole.CODER,
-                    content = generatedMessage,
-                    agentStatus = AgentStatus.DONE,
-                    tokensPerSecond = tokensPerSecond,
+                messages = it.messages + listOf(
+                    ChatMessage(
+                        role = MessageRole.ARCHITECT,
+                        content = plan,
+                        agentStatus = AgentStatus.DONE,
+                        tokensPerSecond = tokensPerSecond,
+                    ),
+                    ChatMessage(
+                        role = MessageRole.CODER,
+                        content = generatedMessage,
+                        agentStatus = AgentStatus.DONE,
+                        tokensPerSecond = tokensPerSecond,
+                    ),
                 ),
+                architectStatus = AgentStatus.DONE,
                 coderStatus = AgentStatus.DONE,
                 files = newFiles,
                 activeFileIndex = targetIndex,
@@ -1725,7 +1919,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 val config = aiConfigRepository.load()
                 val service = getService(config)
-                val resourcePlan = service.prepareResourcePlan()
+                val resourcePlan = service.prepareResourcePlan(deterministicGeneration = true)
                 if (resourcePlan == null || !resourcePlan.allowed) {
                     showGenerationFailure(
                         resourcePlan?.blockingMessage() ?: "Could not inspect device memory before repair.",

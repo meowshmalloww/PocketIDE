@@ -104,8 +104,20 @@ internal object BenchmarkJsonReport {
         JSONObject()
             .put("engine", "llama.cpp via KotlinLlamaCpp")
             .put("wrapper_version", LLAMA_CPP_WRAPPER_VERSION)
-            .put("loader_selected_native_library", BackendInfo.llamaCppNativeLibrary)
-            .put("dispatch_evidence", "native library selected from /proc/cpuinfo Arm ISA flags")
+            .put("expected_loader_target", BackendInfo.llamaCppNativeLibrary)
+            .put(
+                "successfully_loaded_native_library",
+                data.successfullyLoadedNativeLibrary ?: JSONObject.NULL,
+            )
+            .put("native_library_load_verified", data.successfullyLoadedNativeLibrary != null)
+            .put(
+                "dispatch_evidence",
+                if (data.successfullyLoadedNativeLibrary != null) {
+                    "System.loadLibrary succeeded for the /proc/cpuinfo-selected Arm ISA library"
+                } else {
+                    "no successful native library load was recorded"
+                },
+            )
             .put("thread_configuration", "n_threads configured when each native context is loaded")
             .put("actual_worker_count_exposed", false)
             .put("gpu_layers", data.nativeKernelBenchmark?.gpuLayers ?: 0)
@@ -170,6 +182,7 @@ internal object BenchmarkJsonReport {
         JSONObject()
             .put("format", value.format.name)
             .put("requested_context", value.requestedContext)
+            .put("model_context_limit", value.modelContextLimit)
             .put(
                 "effective_context",
                 if (value.format == ModelFormat.PTE) JSONObject.NULL else value.effectiveContext,
@@ -182,12 +195,22 @@ internal object BenchmarkJsonReport {
             .put("requested_output_tokens", value.requestedOutputTokens)
             .put("max_output_tokens", value.maxOutputTokens)
             .put("selected_threads", value.selectedThreads)
+            .put("kv_cache_type_k", value.kvCacheTypeK)
+            .put("kv_cache_type_v", value.kvCacheTypeV)
+            .put("kv_cache_quantized", value.kvCacheQuantized)
+            .put("flash_attention", value.flashAttention)
             .put("total_memory_bytes", value.totalMemoryBytes)
             .put("available_memory_bytes", value.availableMemoryBytes)
             .put("low_memory_threshold_bytes", value.lowMemoryThresholdBytes)
+            .put("android_low_memory", value.androidLowMemory)
             .put("process_pss_bytes", value.processPssBytes)
             .put("estimated_kv_bytes", value.estimatedKvBytes)
+            .put("estimated_weight_working_set_bytes", value.estimatedWeightWorkingSetBytes)
             .put("required_headroom_bytes", value.requiredHeadroomBytes)
+            .put("required_total_capacity_bytes", value.requiredTotalCapacityBytes)
+            .put("mmap_weights", value.mmapWeights)
+            .put("sparse_moe", value.sparseMoe)
+            .put("capacity_constrained", value.capacityConstrained)
             .put("cold_load", value.coldLoad)
             .put("profile_reload", value.profileReload)
             .put("allowed", value.allowed)
@@ -386,7 +409,7 @@ internal object BenchmarkJsonReport {
         else -> "unknown($status)"
     }
 
-    private const val SCHEMA_VERSION = 9
+    private const val SCHEMA_VERSION = 12
     private const val LLAMA_CPP_WRAPPER_VERSION = "0.4.0"
     private const val EXECUTORCH_VERSION = "1.0.1"
 }

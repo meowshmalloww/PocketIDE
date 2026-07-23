@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">PocketIDE local Android architecture</title>
+  <desc id="desc">A prompt stays on an Arm64 phone, runs through a local model and bounded code pipeline, then reaches project files, local runtimes, Android hardware, and benchmark evidence.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#090d16"/><stop offset="1" stop-color="#17112a"/></linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#7c5cff"/><stop offset="1" stop-color="#24d0c4"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#000" flood-opacity=".35"/></filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 Z" fill="#8f82ff"/></marker>
+    <style>
+      .h1{font:700 54px system-ui,sans-serif;fill:#fff}.sub{font:400 24px system-ui,sans-serif;fill:#aeb6ca}
+      .label{font:700 24px system-ui,sans-serif;fill:#fff}.small{font:400 19px system-ui,sans-serif;fill:#c7cce0}
+      .chip{font:600 17px system-ui,sans-serif;fill:#dcd9ff}.box{fill:#161c2b;stroke:#353d56;stroke-width:2}
+      .flow{fill:none;stroke:#8f82ff;stroke-width:5;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <circle cx="1440" cy="80" r="260" fill="#7c5cff" opacity=".08"/>
+  <text x="80" y="88" class="h1">PocketIDE stays on the phone</text>
+  <text x="80" y="130" class="sub">Prompt → local inference → real code → execution → device capabilities → evidence</text>
+
+  <g filter="url(#shadow)">
+    <rect x="70" y="205" rx="28" width="260" height="230" class="box"/>
+    <rect x="92" y="227" rx="14" width="216" height="42" fill="#292344"/>
+    <text x="200" y="256" text-anchor="middle" class="chip">ORDINARY LANGUAGE</text>
+    <text x="100" y="312" class="label">Developer prompt</text>
+    <text x="100" y="350" class="small">Offline request</text>
+    <text x="100" y="380" class="small">Open project files</text>
+    <text x="100" y="410" class="small">No inference server</text>
+
+    <rect x="420" y="205" rx="28" width="310" height="230" class="box"/>
+    <rect x="442" y="227" rx="14" width="266" height="42" fill="url(#accent)"/>
+    <text x="575" y="256" text-anchor="middle" class="chip" fill="#fff">LOCAL MODEL</text>
+    <text x="450" y="312" class="label">GGUF or PTE</text>
+    <text x="450" y="350" class="small">llama.cpp or ExecuTorch</text>
+    <text x="450" y="380" class="small">Memory and context preflight</text>
+    <text x="450" y="410" class="small">Measured device profile</text>
+
+    <rect x="820" y="205" rx="28" width="330" height="230" class="box"/>
+    <rect x="842" y="227" rx="14" width="286" height="42" fill="#292344"/>
+    <text x="985" y="256" text-anchor="middle" class="chip">BOUNDED CODE PIPELINE</text>
+    <text x="850" y="312" class="label">Complete files first</text>
+    <text x="850" y="350" class="small">One clean budget per file</text>
+    <text x="850" y="380" class="small">Local contract validation</text>
+    <text x="850" y="410" class="small">Atomic apply and repair</text>
+
+    <rect x="1240" y="205" rx="28" width="290" height="230" class="box"/>
+    <rect x="1262" y="227" rx="14" width="246" height="42" fill="#292344"/>
+    <text x="1385" y="256" text-anchor="middle" class="chip">PROJECT</text>
+    <text x="1270" y="312" class="label">Editor and files</text>
+    <text x="1270" y="350" class="small">Multiple source files</text>
+    <text x="1270" y="380" class="small">Chat history</text>
+    <text x="1270" y="410" class="small">Errors with locations</text>
+  </g>
+
+  <path d="M330 320 H410" class="flow"/><path d="M730 320 H810" class="flow"/><path d="M1150 320 H1230" class="flow"/>
+
+  <g filter="url(#shadow)">
+    <rect x="130" y="560" rx="28" width="390" height="230" class="box"/>
+    <text x="165" y="615" class="label">Local execution</text>
+    <text x="165" y="655" class="small">CPython with interactive input</text>
+    <text x="165" y="687" class="small">JS · simple TS · Lua · SQL · Shell</text>
+    <text x="165" y="719" class="small">BeanShell · localhost web preview</text>
+    <rect x="165" y="744" rx="12" width="240" height="28" fill="#1f4e49"/>
+    <text x="285" y="764" text-anchor="middle" class="chip">REAL PROGRAM OUTPUT</text>
+
+    <rect x="605" y="560" rx="28" width="390" height="230" class="box"/>
+    <text x="640" y="615" class="label">Android hardware bridge</text>
+    <text x="640" y="655" class="small">Battery · network · sensors · storage</text>
+    <text x="640" y="687" class="small">Flashlight · vibration · toast · TTS</text>
+    <text x="640" y="719" class="small">Location · notifications · local files</text>
+    <rect x="640" y="744" rx="12" width="250" height="28" fill="#43366f"/>
+    <text x="765" y="764" text-anchor="middle" class="chip">CODE CONTROLS ITS PHONE</text>
+
+    <rect x="1080" y="560" rx="28" width="390" height="230" class="box"/>
+    <text x="1115" y="615" class="label">Reproducible evidence</text>
+    <text x="1115" y="655" class="small">Decode · TTFT · prefill · process PSS</text>
+    <text x="1115" y="687" class="small">CPU · battery · temperature · thermal</text>
+    <text x="1115" y="719" class="small">Readable report and JSON export</text>
+    <rect x="1115" y="744" rx="12" width="250" height="28" fill="#22455f"/>
+    <text x="1240" y="764" text-anchor="middle" class="chip">NO SIMULATED SCORES</text>
+  </g>
+
+  <path d="M1385 435 C1385 500 1320 515 1270 550" class="flow"/>
+  <path d="M1270 435 C1100 500 850 500 800 550" class="flow"/>
+  <path d="M1260 435 C900 515 400 475 325 550" class="flow"/>
+  <text x="800" y="854" text-anchor="middle" class="sub">Arm64 Android · fully local workflow · privacy by architecture</text>
+</svg>

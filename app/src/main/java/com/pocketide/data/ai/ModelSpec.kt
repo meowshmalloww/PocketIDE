@@ -25,8 +25,19 @@ object ModelSpec {
         val maxContextLength: Int,
         val displayName: String,
         val source: String = "filename or file-size estimate",
+        /** Fixed export precision when it is known. GGUF precision is selected at load time. */
+        val exportedKvBytesPerElement: Int? = null,
+        /** Exact GGUF general.architecture value when metadata is available. */
+        val architectureId: String? = null,
+        val expertCount: Int? = null,
+        val expertUsedCount: Int? = null,
     ) {
         val paramCountMillion: Int get() = (paramCountBillion * 1000).toInt()
+
+        /** Active experts reduce compute per token, but do not remove inactive weights from storage. */
+        val isMixtureOfExperts: Boolean
+            get() = (expertCount ?: 0) > 0 ||
+                architectureId?.contains("moe", ignoreCase = true) == true
     }
 
     /**
@@ -54,8 +65,40 @@ object ModelSpec {
                     displayName = metadata.name?.takeIf { it.isNotBlank() }
                         ?: metadata.architecture,
                     source = "GGUF metadata",
+                    architectureId = metadata.architecture,
+                    expertCount = metadata.expertCount,
+                    expertUsedCount = metadata.expertUsedCount,
                 )
             }
+        }
+
+        // A PTE's context and KV layout are fixed when it is exported. The Java runner cannot
+        // enlarge either value at runtime. The exact catalog artifact bundled by PocketIDE was
+        // published with max_seq_length=2048, max_context_length=2048, FP32 model/cache dtype,
+        // and no KV-cache quantization. Unknown PTEs stay conservative because ExecuTorch 1.0.1
+        // does not expose their constant-method metadata through the Android LLM API.
+        if (fileName.endsWith(".pte")) {
+            val isPublishedSpinQuant = "llama-3.2-1b-instruct-spinquant_int4_eo8" in fileName ||
+                "llama_3_2_1b_instruct_spinquant_int4_eo8" in fileName
+            return Architecture(
+                paramCountBillion = paramCount ?: 1.0f,
+                numLayers = 16,
+                hiddenDim = 2048,
+                numKvHeads = 8,
+                headDim = 64,
+                maxContextLength = 2048,
+                displayName = if (isPublishedSpinQuant) {
+                    "Llama-3.2-1B SpinQuant PTE"
+                } else {
+                    "PTE export (conservative bound)"
+                },
+                source = if (isPublishedSpinQuant) {
+                    "published ExecuTorch export recipe"
+                } else {
+                    "conservative PTE bound; export metadata unavailable through Android API"
+                },
+                exportedKvBytesPerElement = if (isPublishedSpinQuant) 4 else null,
+            )
         }
 
         // Match to known architecture
@@ -82,10 +125,10 @@ object ModelSpec {
             Arch(0.135f, 30, 576, 4, 64, 2048, "SmolLM2-135M"),
             Arch(0.360f, 24, 960, 4, 64, 2048, "SmolLM2-360M"),
             Arch(0.5f, 24, 896, 2, 64, 32768, "Qwen2.5-0.5B"),
-            Arch(1.0f, 16, 2048, 8, 64, 131072, "Llama-3.2-1B"),
+            Arch(1.0f, 16, 2048, 8, 64, 8192, "Llama-3.2-1B quantized release"),
             Arch(1.5f, 28, 1536, 2, 128, 32768, "Qwen2.5-1.5B"),
             Arch(1.7f, 24, 2048, 3, 64, 8192, "SmolLM2-1.7B"),
-            Arch(3.0f, 36, 2048, 4, 64, 32768, "Qwen2.5-3B / Llama-3.2-3B"),
+            Arch(3.0f, 36, 2048, 2, 128, 32768, "Qwen2.5-Coder-3B"),
             Arch(3.8f, 32, 3072, 8, 96, 4096, "Phi-3.5-mini"),
             Arch(7.0f, 28, 3584, 4, 128, 32768, "Qwen2.5-7B"),
         )
@@ -120,7 +163,7 @@ object ModelSpec {
             estimatedParams <= 0.2f -> Architecture(0.135f, 30, 576, 4, 64, 2048, "SmolLM2-135M (estimated)", "file-size estimate")
             estimatedParams <= 0.6f -> Architecture(0.5f, 24, 896, 2, 64, 32768, "Qwen2.5-0.5B (estimated)", "file-size estimate")
             estimatedParams <= 1.2f -> Architecture(1.5f, 28, 1536, 2, 128, 32768, "Qwen2.5-1.5B (estimated)", "file-size estimate")
-            estimatedParams <= 2.5f -> Architecture(3.0f, 36, 2048, 4, 64, 32768, "Qwen2.5-3B (estimated)", "file-size estimate")
+            estimatedParams <= 2.5f -> Architecture(3.0f, 36, 2048, 2, 128, 32768, "Qwen2.5-Coder-3B (estimated)", "file-size estimate")
             else -> Architecture(7.0f, 28, 3584, 4, 128, 32768, "Qwen2.5-7B (estimated)", "file-size estimate")
         }
     }

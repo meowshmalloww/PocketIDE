@@ -8,13 +8,27 @@ import java.io.File
 class ModelCatalogTest {
     @Test
     fun `catalog uses exact published artifacts and direct download URLs`() {
-        assertEquals(2, ModelCatalog.entries.size)
+        assertEquals(4, ModelCatalog.entries.size)
 
         val qwen = ModelCatalog.qwenCoder.modelAsset
         assertEquals(1_066_227_264L, qwen.expectedBytes)
         assertEquals(
             "aa8353e0d0fca3a0041828701e90db7635197400f040676d11d7798665fa316e",
             qwen.sha256,
+        )
+
+        val qwen3b = ModelCatalog.qwenCoder3b.modelAsset
+        assertEquals(1_997_879_744L, qwen3b.expectedBytes)
+        assertEquals(
+            "282085f05511706c7b59b32ccabfc452f214771076298c29183e595c576417e0",
+            qwen3b.sha256,
+        )
+
+        val qwen3bQuality = ModelCatalog.qwenCoder3bQuality.modelAsset
+        assertEquals(2_104_932_800L, qwen3bQuality.expectedBytes)
+        assertEquals(
+            "724fb256bec1ff062b2f65e4569e871ad2e95ab2a3989723d1769c54294730b7",
+            qwen3bQuality.sha256,
         )
 
         val llama = ModelCatalog.llamaSpinQuant
@@ -35,6 +49,8 @@ class ModelCatalogTest {
         assertTrue(installed.tokenizerPath.endsWith(".model"))
         assertEquals(PromptTemplate.LLAMA3, installed.promptTemplate)
         assertEquals(PromptTemplate.QWEN, ModelCatalog.qwenCoder.promptTemplate)
+        assertEquals(PromptTemplate.QWEN, ModelCatalog.qwenCoder3b.promptTemplate)
+        assertEquals(PromptTemplate.QWEN, ModelCatalog.qwenCoder3bQuality.promptTemplate)
     }
 
     @Test

@@ -1,0 +1,170 @@
+POCKETIDE BENCHMARK REPORT
+Generated: 2026-07-18 19:12:14
+Schema: 9
+
+=== MEASUREMENT INTEGRITY ===
+Chat workload: real loaded-model ExecuTorch PTE generation call
+Native microbenchmark: not exposed by the ExecuTorch 1.0 Android LLM API
+Simulated or estimated performance scores: none
+Warmups excluded from reported statistics: yes
+Decode tok/s timing: after first emitted token
+Model loading and prompt formatting included in TTFT: no
+KV state reset before each measured PTE run: true
+Fixed GGUF prompt may reuse the runtime prefix cache after warmup: false
+Native prompt test clears KV state between repetitions: false
+PSS label: maximum of start, first-token, and finish samples
+KleidiAI kernel invocation verified: no (runtime exposes no proof)
+Energy scope: public Android whole-device fuel gauge; never presented as app-only power
+
+=== PROTOCOL ===
+Mode: Sustained evidence
+Workload: deterministic_code_generation
+Prompt SHA-256: e45811588dbd52c562dac999f1a439543ad452d59c985bedd94ff34fb1e53736
+Requested output: 128 tokens
+Candidate threads: 4
+Screening measured runs/profile: 0
+Confirmation measured runs/profile: 0
+Sustained measured runs: 8
+Sampler: temperature 0.0, seed -1, ignore EOS false
+Backend: ExecuTorch / PTE
+Thread control: PTE export/runtime controlled; Android LlmModule does not expose worker count
+
+=== INFERENCE RESOURCE PLAN ===
+Format: PTE
+PTE context: export controlled; app sequence upper bound 4096
+Batch size: export controlled
+Output requested/cap: 128/128
+Selected threads: 4
+Cold load: false; profile reload: false; allowed: true
+System memory total/available/low threshold: 3629.2 / 883.1 / 216.0 MB
+Process PSS before plan: 1621.5 MB
+Estimated KV / required headroom: 0.0 / 128.0 MB
+Decision: memory tier up to 4.5 GiB; PTE context, workers, and delegates remain export controlled
+
+=== DEVICE ===
+Manufacturer/model: LGE LM-Q620
+SoC: QTI SM6150
+Device/product: mh3 / mh3
+Hardware/board: mh3 / mh3_lao_com
+Android: 12 (API 31)
+ABIs: arm64-v8a, armeabi-v7a, armeabi
+CPU cores: 8
+CPU max-frequency clusters: 6x1709MHz, 2x2016MHz
+App max Java heap: 256.0 MB
+
+=== ARM / RUNTIME EVIDENCE ===
+Architecture: arm64-v8a
+NEON/ASIMD: true
+Dotprod/i8mm/FP16: true/false/true
+SVE/SVE2/SME2: false/false/false
+Engine: ExecuTorch Android 1.0.1
+Backend/delegates: embedded in the PTE export and runtime; not inferred from extension
+Actual worker count/delegate proof exposed by API: no
+
+=== MODEL ===
+Name: Llama-3.2-1B-Instruct-SpinQuant_INT4_EO8.pte
+Format: ExecuTorch (.pte)
+Quantization: INT4 (group_size=32) (user label; not verified from GGUF metadata)
+File size: 1083.3 MB (1135951488 bytes)
+Architecture: Llama-3.2-1B, 1.0B params
+Architecture source: filename architecture table
+Layers/hidden/KV heads/head dim: 16/2048/8/64
+Model max context: 131072
+
+=== NATIVE MICROBENCHMARK ===
+Unavailable: Not applicable to PTE; real performance is measured through ExecuTorch generation callbacks
+
+=== MEASURED CHAT PROFILES ===
+PTE (8 measured; phases {sustained=8}):
+  decode median/mean: 11.08 / 11.10 tok/s
+  range/stddev/CV: 10.94-11.30 / 0.14 / 1.3%
+  TTFT median/p95: 2452 / 2454 ms
+  max sampled PSS mean: 1624.1 MB
+  process CPU/wall median: 1.00x
+
+=== ALL MEASURED RUNS AGGREGATE ===
+Scope: every measured run on the fixed PTE export/runtime profile
+Measured/warmup runs: 8/1
+Decode median/mean: 11.08 / 11.10 tok/s
+Decode min/max/stddev/CV: 10.94 / 11.30 / 0.14 / 1.3%
+TTFT median/p90/p95: 2452 / 2454 / 2454 ms
+Sustained first/second-half median: 11.26 / 10.95 tok/s
+Sustained throughput retained/change: 97.2% / -2.8%
+Generated tokens: 1024
+Measured generation time: 110702 ms
+Battery temperature start/end/delta: 31.3 / 29.9 / -1.4 C
+Final Android thermal status: none
+
+=== DEVICE THERMAL / ENERGY EVIDENCE ===
+Interval/samples: 137136 ms / 11
+Charging observed: false
+Energy source: Sampled battery current and voltage integration
+Measurement quality: sampled current integration; device-level estimate
+Fuel-gauge decrease events: 0
+Whole-device energy: 90.4160 mWh
+Energy per generated token: 88.297 uWh/token
+Average whole-device power: 2373.5 mW
+Charge decrease: unavailable uAh
+Current-integration coverage: 100.0%
+Battery level start/end: 80 / 80%
+Battery temperature start/end/delta: 31.3 / 29.9 / -1.4 C
+Maximum Android thermal status: none
+Scope warning: public BatteryManager counters cover the entire phone, not only PocketIDE
+
+=== PER-RUN CHAT RESULTS ===
+#1 PTE sustained WARMUP
+  11.24 tok/s | TTFT 2430 ms | 128/128 output tokens
+  total 13729 ms | CPU 13656 ms | sampled PSS 1626.7 MB
+  threads requested/load-configured 4/export controlled | native live count not exposed
+  prompt 72 exact
+  battery 80% | temp 31.3 C | thermal none
+#2 PTE sustained
+  11.26 tok/s | TTFT 2312 ms | 128/128 output tokens
+  total 13593 ms | CPU 13549 ms | sampled PSS 1623.2 MB
+  threads requested/load-configured 4/export controlled | native live count not exposed
+  prompt 72 exact
+  battery 80% | temp 29.4 C | thermal none
+#3 PTE sustained
+  11.30 tok/s | TTFT 2309 ms | 128/128 output tokens
+  total 13544 ms | CPU 13546 ms | sampled PSS 1641.5 MB
+  threads requested/load-configured 4/export controlled | native live count not exposed
+  prompt 72 exact
+  battery 80% | temp 29.4 C | thermal none
+#4 PTE sustained
+  11.27 tok/s | TTFT 2308 ms | 128/128 output tokens
+  total 13575 ms | CPU 13531 ms | sampled PSS 1621.1 MB
+  threads requested/load-configured 4/export controlled | native live count not exposed
+  prompt 72 exact
+  battery 80% | temp 29.4 C | thermal none
+#5 PTE sustained
+  11.07 tok/s | TTFT 2451 ms | 128/128 output tokens
+  total 13919 ms | CPU 13854 ms | sampled PSS 1621.4 MB
+  threads requested/load-configured 4/export controlled | native live count not exposed
+  prompt 72 exact
+  battery 80% | temp 29.4 C | thermal none
+#6 PTE sustained
+  11.09 tok/s | TTFT 2454 ms | 128/128 output tokens
+  total 13908 ms | CPU 13846 ms | sampled PSS 1621.1 MB
+  threads requested/load-configured 4/export controlled | native live count not exposed
+  prompt 72 exact
+  battery 80% | temp 29.4 C | thermal none
+#7 PTE sustained
+  10.94 tok/s | TTFT 2454 ms | 128/128 output tokens
+  total 14066 ms | CPU 14019 ms | sampled PSS 1621.3 MB
+  threads requested/load-configured 4/export controlled | native live count not exposed
+  prompt 72 exact
+  battery 80% | temp 29.4 C | thermal none
+#8 PTE sustained
+  10.95 tok/s | TTFT 2454 ms | 128/128 output tokens
+  total 14051 ms | CPU 13978 ms | sampled PSS 1621.5 MB
+  threads requested/load-configured 4/export controlled | native live count not exposed
+  prompt 72 exact
+  battery 80% | temp 29.9 C | thermal none
+#9 PTE sustained
+  10.95 tok/s | TTFT 2452 ms | 128/128 output tokens
+  total 14046 ms | CPU 13971 ms | sampled PSS 1621.8 MB
+  threads requested/load-configured 4/export controlled | native live count not exposed
+  prompt 72 exact
+  battery 80% | temp 29.9 C | thermal none
+
+END OF REPORT

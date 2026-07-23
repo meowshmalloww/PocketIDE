@@ -24,3 +24,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "PocketIDE"
 include(":app")
+include(":third_party:kotlinllamacpp")

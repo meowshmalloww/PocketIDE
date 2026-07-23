@@ -18,6 +18,7 @@ class BenchmarkSession {
     private var nativeKernelBenchmark: NativeKernelBenchmark? = null
     private var nativeKernelBenchmarkError: String? = null
     private var resourcePlan: InferenceResourcePlan? = null
+    private var successfullyLoadedNativeLibrary: String? = null
     private var previousProcessExit: PreviousProcessExit? = null
     private val powerSamples = mutableListOf<BenchmarkPowerSample>()
 
@@ -82,6 +83,10 @@ class BenchmarkSession {
 
     fun setResourcePlan(value: InferenceResourcePlan) {
         resourcePlan = value
+    }
+
+    fun setSuccessfullyLoadedNativeLibrary(value: String?) {
+        successfullyLoadedNativeLibrary = value
     }
 
     fun setPreviousProcessExit(value: PreviousProcessExit?) {
@@ -159,6 +164,7 @@ class BenchmarkSession {
         nativeKernelBenchmark = null
         nativeKernelBenchmarkError = null
         resourcePlan = null
+        successfullyLoadedNativeLibrary = null
         powerSamples.clear()
         sessionStartTimeMs = System.currentTimeMillis()
     }
@@ -182,6 +188,7 @@ class BenchmarkSession {
         nativeKernelBenchmark = nativeKernelBenchmark,
         nativeKernelBenchmarkError = nativeKernelBenchmarkError,
         resourcePlan = resourcePlan,
+        successfullyLoadedNativeLibrary = successfullyLoadedNativeLibrary,
         previousProcessExit = previousProcessExit,
         powerSamples = powerSamples.toList(),
     )
@@ -210,6 +217,7 @@ internal data class BenchmarkExportSnapshot(
     val nativeKernelBenchmark: NativeKernelBenchmark?,
     val nativeKernelBenchmarkError: String?,
     val resourcePlan: InferenceResourcePlan?,
+    val successfullyLoadedNativeLibrary: String?,
     val previousProcessExit: PreviousProcessExit?,
     val powerSamples: List<BenchmarkPowerSample>,
 )

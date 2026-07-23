@@ -143,6 +143,8 @@ private fun CatalogModelCard(
         state.phase == CatalogDownloadPhase.PAUSED
     val description = when (entry.id) {
         ModelCatalog.qwenCoder.id -> stringResource(R.string.model_catalog_qwen_description)
+        ModelCatalog.qwenCoder3b.id -> stringResource(R.string.model_catalog_qwen_3b_description)
+        ModelCatalog.qwenCoder3bQuality.id -> stringResource(R.string.model_catalog_qwen_3b_quality_description)
         else -> stringResource(R.string.model_catalog_llama_description)
     }
 

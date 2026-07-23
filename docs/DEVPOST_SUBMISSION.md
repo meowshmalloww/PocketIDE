@@ -55,6 +55,12 @@ PocketIDE can help when a developer, student, field worker, or repair technician
 
 This is more than offline chat because generated programs can accept terminal input and communicate with available Android hardware. PocketIDE is a development tool for urgent and field situations. It is not a certified emergency, medical, or safety system.
 
+## What the demonstration proves
+
+The video shows two small programs generated and executed locally on the phone. The first program reads the phone's real battery and network state, then crosses the boundary from generated text to a physical device action by triggering vibration and an Android toast through PocketIDE's injected hardware bridge. The second program remains active in the terminal, accepts repeated user choices, follows different emergency guidance branches, and exits cleanly when the user enters Q.
+
+I chose compact emergency examples because they are practical, easy for judges to verify on screen, and realistic for a small on device coding model. Together they demonstrate the complete PocketIDE loop: describe a tool in ordinary language, generate a source file locally, save it into the project, execute it on the same phone, accept interactive input, and use Android capabilities without a server. The generated guidance is a software demonstration and is not a substitute for official emergency instructions.
+
 ## How I built it
 
 I built PocketIDE as a native Android application using Kotlin and Jetpack Compose.
@@ -150,19 +156,21 @@ Add these in this order:
 1. Source code: `https://github.com/meowshmalloww/PocketIDE`
 2. APK: add the public GitHub Release or Google Drive download link after a clean install test
 3. Video: add the public YouTube link after upload
-4. Benchmark artifacts: add a direct repository link to the final schema 9 text report and JSON
+4. Benchmark artifacts: add a direct repository link to the exact schema 9 text reports and the clearly labeled SHA-256-indexed JSON transcription
 
 Do not add a private link, placeholder, or APK that still needs permission approval. Judges must have free access through the judging period.
 
 ## Project media
 
-Use five clear images. Crop each to 3:2 and keep it under 5 MB.
+Five ready-to-upload 3:2 images are in `docs/assets`. Each is taken from the verified final video and is well below Devpost's 5 MB limit.
 
-1. **Hero:** PocketIDE AI Assistant beside generated code. Caption: `A fully local AI coding workflow on an Arm Android phone.`
-2. **Offline proof:** Airplane mode visible with the selected local model. Caption: `Qwen2.5 Coder 1.5B running locally without an inference server.`
-3. **Execution:** Terminal showing interactive input, `96`, and `Goodbye`. Caption: `Generated Python accepts real terminal input on the phone.`
-4. **Hardware:** Device health output and the `Scan complete` toast. Caption: `Generated code reads real Android hardware through PocketIDE.`
-5. **Optimization:** The schema 9 benchmark Summary showing 11.73 tok/s, 8.12 tok/s, and 44.4 percent. Caption: `Real physical device calibration selected two threads and improved decode throughput by 44.4 percent.`
+1. **Hero and hardware:** `gallery-hero-hardware.jpg`. Caption: `A local coding model creates Python that reaches battery, network, vibration, and toast capabilities on the same Arm phone.`
+2. **Offline proof:** `gallery-offline.jpg`. Caption: `The physical Android phone is in airplane mode with no inference server.`
+3. **Local model:** `gallery-local-model.jpg`. Caption: `Qwen2.5 Coder 1.5B Q4_0 generates a real project file locally.`
+4. **Execution:** `gallery-terminal.jpg`. Caption: `Generated Python remains active, accepts repeated terminal input, follows different branches, and exits normally.`
+5. **Optimization:** `gallery-benchmark.jpg`. Caption: `Physical-device calibration improved median decode throughput by 44.4 percent and reduced median TTFT by 34.1 percent.`
+
+Use `video-thumbnail.jpg` as the YouTube thumbnail. It shows the physical benchmark dialog beside the measured comparison and includes the CPU-only scope.
 
 Do not use a screenshot of an old benchmark, an incomplete run, or the report section with the known final resource plan display mismatch.
 
@@ -208,16 +216,35 @@ Extremely likely
 Provide one maintained Android reference application and compatibility matrix that maps each supported model export to the exact ExecuTorch release, backend, device requirements, and reproducible memory, latency, thermal, and power benchmark steps.
 ```
 
-## Video recording plan
+## Final video package
+
+The finished edited video is `C:\Users\wenje\Downloads\PocketIDE Video Final.mp4`. It is 1 minute 47 seconds, 1920 by 1080, and keeps the original physical-phone narration and terminal interaction. Upload this file to YouTube rather than the longer source recording.
+
+The edit removes only inactive generation waits and an unrelated settings detour. It does not substitute prepared output for a failed generation. The right-side evidence panel makes the offline setup, hardware bridge, live input loop, benchmark comparison, and CPU-only scope readable to judges on a desktop.
+
+### Final video timeline
+
+| Time | Visible proof |
+| --- | --- |
+| 0:00 to 0:12 | Physical LGE phone, airplane mode, Android 12, and no inference server |
+| 0:12 to 0:33 | Qwen2.5 Coder 1.5B Q4_0 generating a real Python file locally |
+| 0:33 to 0:48 | Generated phone check reading battery and network, then triggering vibration and a toast |
+| 0:48 to 0:56 | Second compact prompt and real on-device generation |
+| 0:56 to 1:11 | Generated emergency menu running in the editor and accepting repeated terminal input |
+| 1:11 to 1:17 | Brief browser-preview proof from the same PocketIDE session |
+| 1:17 to 1:47 | In-app benchmark evidence beside the 44.4 percent decode gain, 34.1 percent TTFT reduction, sustained result, and explicit CPU-only scope |
+
+### Original recording gate
 
 ### Record only after this gate passes
 
 1. Install the exact APK that judges will download.
-2. Complete two cold local AI generations without an app restart.
-3. Run the interactive terminal example and confirm it prints `96` and `Goodbye`.
-4. Run the hardware scanner and confirm it prints real values, survives a missing sensor, vibrates, and shows the toast.
-5. Open the schema 9 benchmark Summary and verify that the cards match the saved report.
-6. Put the final report and JSON in the public repository.
+2. Run the Emergency Phone Signal prompt below from a new project and confirm that PocketIDE creates `phone_signal.py`.
+3. Run `phone_signal.py` and confirm it prints real battery and network values, vibrates, and shows the toast.
+4. Run the Emergency Action Menu and confirm terminal inputs `1`, `2`, and `q` work without restarting the app.
+5. Open the corrected benchmark Summary and verify that the cards match the saved report.
+6. Put the exact report and JSON shown in the video in the public repository.
+7. If any AI generation fails, stop recording, start a new project, and resolve the failure before making the final video. Do not cut from a failed response to unrelated prepared code.
 
 ### Phone and recording setup
 
@@ -228,54 +255,54 @@ Provide one maintained Android reference application and compatibility matrix th
 5. Use the phone screen recorder at 1080p and 30 frames per second with touch indicators enabled.
 6. Record short clips separately. Place the portrait recording in a 1920 by 1080 video with large captions so judges can read it on a desktop.
 7. Add narration after recording. Use no music unless you own it and have permission. The safest choice is narration with no music.
-8. If generation is sped up, display `2x playback, real on device generation` on screen. Do not replace output with unrelated prepared code.
-
-### Timeline and shots
-
-Keep the finished video around 2 minutes 35 seconds.
-
-| Time | Show | Say |
-| --- | --- | --- |
-| 0:00 to 0:12 | Physical LGE phone, airplane mode, PocketIDE home | This Arm64 Android phone is offline. PocketIDE is a local AI IDE, not a remote editor. |
-| 0:12 to 0:25 | Settings with Qwen2.5 Coder 1.5B Q4_0 selected | The model is a roughly one gigabyte GGUF file and inference stays on this phone. |
-| 0:25 to 0:58 | Paste the hardware scanner prompt and show real generation, optionally at 2x | The local agent is creating a Python device health scanner with PocketIDE hardware calls. |
-| 0:58 to 1:20 | Open the generated file, run it, show device values and toast | PocketIDE executes the code with CPython. It reads real battery, network, storage, and sensor information, then vibrates and shows a toast. |
-| 1:20 to 1:38 | Run the prepared interactive calculator and enter `multiply`, `12`, `8`, `q` | The terminal accepts input while the generated program is running. It prints 96 and exits normally. |
-| 1:38 to 1:52 | Briefly show multiple files and a device local browser preview | Projects can contain multiple files, and web projects preview through a loopback address on the phone. |
-| 1:52 to 2:22 | Scroll the benchmark Summary cards | The corrected Deep benchmark selected two configured threads. Median decode improved from 8.12 to 11.73 tokens per second, while median time to first token fell from 132 to 87 milliseconds. |
-| 2:22 to 2:35 | Return to AI Assistant and show GitHub address | PocketIDE makes private, local software creation available when a laptop, server, or reliable network is not. |
+8. Record the complete generation once. In the edited video, speed up only the middle of that same clip and display `2x playback, real on device generation`.
+9. Do not live generate a large website or multi file project in the submission video. The 1.5B model can spend its complete bounded output on markup before closing the file.
 
 ### Narration script
 
 ```text
-This LGE LM Q620 is an Arm64 Android phone, and it is in airplane mode. PocketIDE is a local AI development environment, not a remote editor.
+This is an LGE LM Q620 running Android 12 on a Qualcomm SM6150 Arm64 platform. This physical phone is in airplane mode, with no inference server.
 
-The selected model is Qwen2.5 Coder 1.5B Q4_0, a roughly one gigabyte GGUF file. The prompt, source code, project, and inference remain on this phone.
+PocketIDE runs Qwen2.5 Coder 1.5B Q4_0 locally. The prompt, inference, source code, and execution all remain on the device.
 
-I am asking the local agent to create a device health scanner. This generation is shown at two times playback, but it is the real output from this device. PocketIDE creates the Python file and runs it with CPython. The program reads real battery, network, storage, and accelerometer information. A missing sensor cannot stop the report. It then vibrates the phone and shows a toast.
+First, the model creates phone_signal.py. The program reads the phone's real battery and network state, then activates vibration and an Android toast through PocketIDE's hardware bridge.
 
-This second generated program proves interactive execution. I enter multiply, twelve, eight, and quit. The terminal prints ninety six and the program exits normally. PocketIDE also supports multiple project files and local browser previews.
+Next, it creates an emergency action menu. The same process stays active while I enter fire, flood, and quit, follows each branch, and exits normally. This proves real interactive terminal execution.
 
-Optimization is measured rather than assumed. On this phone, the corrected Deep benchmark recreated the native context for each profile and selected two configured threads. Median decode improved from 8.12 to 11.73 tokens per second, a 44.4 percent increase. Median time to first token fell from 132 to 87 milliseconds. A sustained run measured 11.48 tokens per second with no second half throughput loss.
+The optimization is measured on this same phone. The Deep benchmark selected two threads and improved decode speed from 8.12 to 11.73 tokens per second, which is 44.4 percent faster. Time to first token dropped from 132 to 87 milliseconds, a 34.1 percent reduction. CPU time per output token fell by 62 percent.
 
-These are CPU results using the loader selected Armv8.2 dot product library. I do not claim NPU, GPU, or KleidiAI acceleration. PocketIDE exports the complete report and JSON, and the evidence summary is public.
+In the sustained test, throughput improved by 40 percent, from 8.20 to 11.48 tokens per second. Temperature rose by only 0.8 degrees Celsius, with no reported thermal throttling.
 
-PocketIDE turns the Arm phone already in your pocket into a private software creation tool when a laptop, server, or reliable network is unavailable.
+These are real CPU results using the selected Armv8.2 dot product library. I make no NPU or GPU claim, and the complete reports and JSON are public.
+
+PocketIDE turns an Arm phone into a private coding tool when a laptop, server, or reliable network is unavailable.
 ```
 
 ### Demo prompts
 
-Hardware scanner:
+Use the first prompt for the live AI generation. It is intentionally compact enough for the 1.5B model's bounded output. Start from a new empty project.
+
+Emergency Phone Signal:
 
 ```text
-Create one Python file named phone_check.py. Build a device health scanner using the PocketIDE hardware object. Read getDeviceInfo, batteryLevel, isCharging, networkType, storageFree, and readSensor with accelerometer for 1000 milliseconds. Give every hardware call its own try except block so a missing sensor cannot stop the program. Print a clear report, vibrate for 200 milliseconds, and show a toast containing Scan complete. Use no external packages and keep the complete program under 45 lines.
+Create phone_signal.py. Do not import anything. PocketIDE provides a global hardware object. Print EMERGENCY PHONE CHECK. In one try except print Battery and hardware.batteryLevel(). In another try except print Network and hardware.networkType(). In separate try except blocks call hardware.vibrate(300) and hardware.toast("Emergency check complete"). On every failure print Unavailable. Keep it under 24 lines. Create runnable code only.
 ```
 
-Interactive terminal:
+Emergency Action Menu:
 
 ```text
-Create one Python file named main.py. Build an interactive calculator that repeatedly asks the user to enter plus, minus, multiply, divide, power, or q. Ask for two numbers, validate numeric input, handle division by zero, print the result, and return to the menu. Entering q must print Goodbye and exit. Use input only, use no external packages, and keep the complete program under 50 lines.
+Create main.py. Build an emergency action menu. Repeatedly print 1 FIRE, 2 FLOOD, 3 MEDICAL, and Q QUIT. Read one choice with input. Accept each number or word. For fire print Leave now and call emergency services. For flood print Move to higher ground. For medical print Call emergency services and give first aid if trained. For q print Stay safe and exit. Otherwise print Invalid choice. Use no packages and keep it under 25 lines. Create runnable code only.
 ```
+
+Terminal recording inputs:
+
+```text
+1
+2
+q
+```
+
+Expected visible phrases are `Leave now and call emergency services`, `Move to higher ground`, and `Stay safe`.
 
 ### YouTube upload
 
@@ -296,7 +323,7 @@ Corrected schema 9 result: 11.73 tok/s at two configured threads versus 8.12 tok
 Runtime path: CPU with loader selected Armv8.2 dot product library, zero GPU layers
 No NPU, GPU, or KleidiAI kernel acceleration is claimed
 
-Source code and full benchmark evidence:
+Source code, exact benchmark reports, and JSON evidence index:
 https://github.com/meowshmalloww/PocketIDE
 ```
 

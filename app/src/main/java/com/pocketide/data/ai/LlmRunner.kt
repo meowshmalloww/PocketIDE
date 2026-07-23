@@ -19,6 +19,9 @@ interface LlmRunner {
         val contextLength: Int = 4096,
         val batchSize: Int = 512,
         val threadCount: Int = 0,
+        val kvCacheTypeK: GgufKvCacheType = GgufKvCacheType.F16,
+        val kvCacheTypeV: GgufKvCacheType = GgufKvCacheType.F16,
+        val flashAttention: String = "auto",
     )
 
     fun interface TokenSink {

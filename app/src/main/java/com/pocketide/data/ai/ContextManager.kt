@@ -18,9 +18,8 @@ import com.pocketide.data.model.CodeFile
  * 5. **Token budget allocation** — divides the context window across system prompt,
  *    code context, conversation history, and the new user message.
  *
- * The user can configure [AiConfig.contextWindowSize] in Settings. If their model
- * supports 32K or 128K context (e.g., Qwen 2.5 0.5B supports 32K), they can set
- * a higher value and the manager will include more history and code context.
+ * [AiConfig.contextWindowSize] is only a request. The resource planner clamps it to
+ * the selected model's declared limit and the device's measured memory headroom.
  */
 object ContextManager {
 
@@ -47,6 +46,7 @@ object ContextManager {
      * @param userMessage the new user message
      * @param files currently open files (for code context injection)
      * @param contextWindowSize max tokens the model can handle
+     * @param responseTokenBudget output tokens reserved from the same native context
      * @param activeFileIndex which file is currently active (gets priority in code context)
      * @return [ManagedContext] with trimmed history, augmented system prompt, and user message
      */
@@ -56,6 +56,7 @@ object ContextManager {
         userMessage: String,
         files: List<CodeFile>,
         contextWindowSize: Int,
+        responseTokenBudget: Int? = null,
         activeFileIndex: Int,
         enableCodeContext: Boolean = true,
         enableHistorySummary: Boolean = true,
@@ -63,8 +64,11 @@ object ContextManager {
         val systemTokens = estimateTokens(systemPrompt)
         val userTokens = estimateTokens(userMessage)
 
-        // Reserve tokens for the model's response (at least 25% of window, capped at 2048)
-        val responseBudget = (contextWindowSize / 4).coerceIn(256, 2048)
+        // The resource planner owns the real output cap. Reserving that same amount here keeps
+        // prompt pruning and native n_predict within one context instead of silently letting the
+        // input consume space that was intended for generated code.
+        val responseBudget = (responseTokenBudget ?: (contextWindowSize / 4).coerceIn(256, 2048))
+            .coerceIn(64, (contextWindowSize - FORMATTER_HEADROOM_TOKENS).coerceAtLeast(64))
 
         // Available budget for system + code context + history + user
         val available = (contextWindowSize - responseBudget - FORMATTER_HEADROOM_TOKENS)
@@ -122,7 +126,12 @@ object ContextManager {
 
         // Build code context from open files (if enabled)
         val codeContext = if (enableCodeContext && files.isNotEmpty()) {
-            buildCodeContext(files, activeFileIndex, codeContextBudget)
+            CodeContextRetriever.retrieve(
+                files = files,
+                activeFileIndex = activeFileIndex,
+                query = safeUserMessage,
+                tokenBudget = codeContextBudget,
+            ).contextText
         } else {
             ""
         }
@@ -151,76 +160,6 @@ object ContextManager {
             userMessage = safeUserMessage,
             codeContext = codeContext,
         )
-    }
-
-    /**
-     * Builds a compact code context string from open files.
-     * The active file gets full inclusion; other files get summaries (first N lines).
-     */
-    private fun buildCodeContext(
-        files: List<CodeFile>,
-        activeFileIndex: Int,
-        tokenBudget: Int,
-    ): String {
-        if (files.isEmpty()) return ""
-
-        val sb = StringBuilder()
-        var usedTokens = 0
-
-        // Active file first — include full content if it fits
-        val activeFile = files.getOrNull(activeFileIndex)
-        if (activeFile != null) {
-            val header = "--- ${activeFile.name} (active, ${activeFile.language.displayName}) ---\n"
-            val headerTokens = estimateTokens(header)
-            val contentTokens = estimateTokens(activeFile.content)
-            if (headerTokens + contentTokens + usedTokens <= tokenBudget) {
-                sb.append(header)
-                sb.append(activeFile.content)
-                sb.append("\n")
-                usedTokens += headerTokens + contentTokens
-            } else {
-                // Include a truncated version
-                val remaining = tokenBudget - usedTokens - headerTokens
-                if (remaining > 0) {
-                    sb.append(header)
-                    sb.append(truncateText(activeFile.content, remaining * CHARS_PER_TOKEN))
-                    usedTokens = tokenBudget
-                }
-            }
-        }
-
-        // Other files — include summaries (first 10 lines or 500 chars, whichever is smaller)
-        for ((index, file) in files.withIndex()) {
-            if (index == activeFileIndex) continue
-            if (usedTokens >= tokenBudget) break
-
-            val summary = summarizeFile(file)
-            val summaryTokens = estimateTokens(summary)
-            if (usedTokens + summaryTokens <= tokenBudget) {
-                sb.append(summary)
-                usedTokens += summaryTokens
-            } else {
-                val remaining = tokenBudget - usedTokens
-                if (remaining > 20) {
-                    sb.append(truncateText(summary, remaining * CHARS_PER_TOKEN))
-                    usedTokens = tokenBudget
-                }
-            }
-        }
-
-        return sb.toString().trim()
-    }
-
-    /**
-     * Creates a compact summary of a file: filename, language, first ~15 lines.
-     */
-    private fun summarizeFile(file: CodeFile): String {
-        val lines = file.content.lines()
-        val previewLines = lines.take(15)
-        val preview = previewLines.joinToString("\n")
-        val lineCount = lines.size
-        val isTruncated = lineCount > 15
-        return "--- ${file.name} (${file.language.displayName}, ${lineCount} lines${if (isTruncated) ", first 15 shown" else ""}) ---\n$preview\n\n"
     }
 
     /**
