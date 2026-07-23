@@ -107,6 +107,20 @@ Requirements:
 - An `arm64-v8a` device for real inference, or an `x86_64` emulator for UI and execution tests
 - A compatible `.gguf` model, or a `.pte` model and tokenizer
 
+For a command-line build, set `ANDROID_HOME` to the installed Android SDK. Android's official command-line guidance recommends this variable for locating the SDK.
+
+Windows PowerShell example:
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+```
+
+macOS or Linux example:
+
+```bash
+export ANDROID_HOME="$HOME/Android/Sdk"
+```
+
 ```bash
 git clone https://github.com/meowshmalloww/PocketIDE.git
 cd PocketIDE

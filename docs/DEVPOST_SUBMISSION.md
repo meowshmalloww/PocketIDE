@@ -123,7 +123,7 @@ The project combines privacy, offline reliability, developer experience, and rep
 ## Build, run, and validate
 
 1. Clone `https://github.com/meowshmalloww/PocketIDE`.
-2. Open the project in Android Studio with the Android SDK, or run `./gradlew assembleDebug`. On Windows, run `.\gradlew.bat assembleDebug`.
+2. Open the project in Android Studio with the Android SDK. For a command-line build, set `ANDROID_HOME` to the installed SDK, then run `./gradlew assembleDebug`. On Windows, run `.\gradlew.bat assembleDebug`.
 3. Install `app/build/outputs/apk/debug/app-debug.apk` on an Arm64 Android device running API 26 or newer.
 4. In PocketIDE Settings, download or import a compatible GGUF model. A compatible PTE model also requires its tokenizer file.
 5. Select the model, open AI Assistant, and use Code mode to create a project.
